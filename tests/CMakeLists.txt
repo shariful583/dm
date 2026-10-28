@@ -5,8 +5,10 @@ include(Catch)
 
 add_executable(lanes_tests
     core/error_test.cpp
-    core/version_test.cpp)
-target_link_libraries(lanes_tests PRIVATE lanes::core Catch2::Catch2WithMain)
+    core/version_test.cpp
+    testserver/content_test.cpp
+    testserver/test_server_test.cpp)
+target_link_libraries(lanes_tests PRIVATE lanes::core lanes::testserver Catch2::Catch2WithMain)
 lanes_set_compiler_options(lanes_tests)
 
 catch_discover_tests(lanes_tests)

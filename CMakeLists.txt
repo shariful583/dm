@@ -29,5 +29,6 @@ add_subdirectory(src/cli)
 
 if(LANES_BUILD_TESTS)
     enable_testing()
+    add_subdirectory(tools/testserver)
     add_subdirectory(tests)
 endif()
