@@ -47,6 +47,14 @@ struct DownloadOptions {
   // Cap on simultaneous connections to one host (CURLMOPT_MAX_HOST_CONNECTIONS).
   int max_connections_per_host = 16;
 
+  // Dynamic segmentation. When a connection finishes, it takes the second half of
+  // the segment with the most bytes left, if that is more than `min_split_size`.
+  bool split_when_idle = true;
+  std::uint64_t min_split_size = 1 << 20;
+  // A connection far slower than the others (< 1/3 of the median speed, > 2 s of work left) is
+  // restarted on a fresh connection from where it stopped; at most 3 times per byte range.
+  bool replace_slow_connections = true;
+
   // Called on the download thread at most every `progress_interval`, and once at the end.
   std::function<void(const DownloadProgress &)> on_progress;
   std::chrono::milliseconds progress_interval{250};
@@ -55,7 +63,9 @@ struct DownloadOptions {
 struct DownloadResult {
   std::filesystem::path path; // final file
   std::uint64_t size = 0;
-  int connections = 1; // connections actually used
+  int connections = 1; // connections started with (1 after a fallback to one connection)
+  int splits = 0;      // segments split for an idle connection
+  int restarts = 0;    // slow connections replaced
   net::ProbeResult info;
 };
 

@@ -263,6 +263,8 @@ TEST_CASE("segments run in parallel over separate connections", "[engine][segmen
   const auto probe = net::probe(options.request);
   REQUIRE(probe);
   options.probe = *probe;
+  options.split_when_idle = false; // exactly the 8 planned segments
+  options.replace_slow_connections = false;
   f.server.reset_stats(); // count only the download's connections
   const auto result = download_file(options);
   REQUIRE(result);
@@ -326,6 +328,10 @@ TEST_CASE("per-host connection cap queues the extra segments", "[engine][segment
   Fixture f;
   auto options = f.options("/files/data.bin?rate=8388608");
   options.max_connections_per_host = 2;
+  // A split stops connections early; the server notices the closed socket a moment later and
+  // briefly counts it as busy, which would blur the measurement.
+  options.split_when_idle = false;
+  options.replace_slow_connections = false;
   const auto result = download_file(options);
   REQUIRE(result);
   CHECK(result->connections == 8); // 8 segments, at most 2 transferring at once
@@ -350,6 +356,8 @@ TEST_CASE("a server that ignores ranges falls back to one connection", "[engine]
 TEST_CASE("progress lists every segment", "[engine][segments]") {
   Fixture f;
   auto options = f.options("/files/data.bin?rate=8388608");
+  options.split_when_idle = false; // exactly the 8 planned segments
+  options.replace_slow_connections = false;
   std::vector<DownloadProgress> events;
   options.progress_interval = std::chrono::milliseconds(50);
   options.on_progress = [&](const DownloadProgress &p) { events.push_back(p); };
@@ -374,6 +382,91 @@ TEST_CASE("one failing segment fails the download and keeps the .part", "[engine
   CHECK(result.error().code == ErrorCode::Network); // per-segment retries come in step 8
   CHECK(fs::exists(f.dir.path() / "data.bin.part"));
   CHECK_FALSE(fs::exists(f.dir.path() / "data.bin"));
+}
+
+namespace {
+
+// Final progress must show segments that tile the file exactly, all complete.
+void check_segments_cover(const DownloadProgress &last, std::uint64_t size) {
+  std::uint64_t next = 0;
+  for (const auto &s : last.segments) {
+    CHECK(s.start == next);
+    REQUIRE(s.end);
+    CHECK(s.received == *s.end - s.start + 1);
+    next = *s.end + 1;
+  }
+  CHECK(next == size);
+}
+
+} // namespace
+
+TEST_CASE("an idle connection takes half of a slow segment", "[engine][dynamic]") {
+  // 4 segments of 1 MiB; whichever request reaches the server first runs at 512 KiB/s.
+  TestServer server;
+  constexpr std::uint64_t kFile = 4 << 20;
+  server.add_file("/f.bin", {.size = kFile, .seed = 40});
+  server.start();
+  TempDir dir;
+  const auto run = [&](bool split, const std::string &tag) {
+    DownloadOptions o;
+    // `tag` keeps the server's per-URL "first request is slow" counter separate per run.
+    o.request.url = server.url("/f.bin?slow_requests=1&slow_rate=524288&run=" + tag);
+    o.directory = dir.path();
+    o.filename = tag + ".bin";
+    o.connections = 4;
+    o.min_split_size = 256 << 10;
+    o.split_when_idle = split;
+    o.replace_slow_connections = false; // isolate the idle split
+    DownloadProgress last;
+    o.on_progress = [&](const DownloadProgress &p) { last = p; };
+    const auto start = std::chrono::steady_clock::now();
+    const auto result = download_file(o);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    REQUIRE(result);
+    CHECK(sha256_hex(read_file(result->path)) == content_sha256(40, kFile));
+    check_segments_cover(last, kFile);
+    return std::pair{elapsed, result->splits};
+  };
+  const auto [fixed_time, fixed_splits] = run(false, "fixed");  // slow 1 MiB at 512 KiB/s: ~2 s
+  const auto [split_time, split_splits] = run(true, "dynamic"); // slow part shrinks to 256 KiB
+  CHECK(fixed_splits == 0);
+  CHECK(split_splits >= 1);
+  CHECK(split_time * 2 < fixed_time);
+}
+
+TEST_CASE("a slow connection is replaced by a fresh one", "[engine][dynamic]") {
+  // 4 segments of 3 MiB at 2 MiB/s each; the first request to arrive runs at 128 KiB/s and would
+  // need ~24 s on its own.
+  TestServer server;
+  constexpr std::uint64_t kFile = 12 << 20;
+  server.add_file("/f.bin", {.size = kFile, .seed = 41});
+  server.start();
+  TempDir dir;
+  DownloadOptions o;
+  o.request.url = server.url("/f.bin?rate=2097152&slow_requests=1&slow_rate=131072");
+  o.directory = dir.path();
+  o.connections = 4;
+  o.split_when_idle = false; // isolate the replacement
+  DownloadProgress last;
+  o.on_progress = [&](const DownloadProgress &p) { last = p; };
+  const auto start = std::chrono::steady_clock::now();
+  const auto result = download_file(o);
+  const auto elapsed = std::chrono::steady_clock::now() - start;
+  REQUIRE(result);
+  CHECK(result->restarts >= 1);
+  CHECK(elapsed < std::chrono::seconds(7)); // ~2 s until replaced + ~1.4 s for the rest
+  CHECK(sha256_hex(read_file(result->path)) == content_sha256(41, kFile));
+  check_segments_cover(last, kFile);
+}
+
+TEST_CASE("uniformly slow connections are left alone", "[engine][dynamic]") {
+  Fixture f;
+  auto options = f.options("/files/data.bin?rate=2097152"); // all equal: nobody is "slow"
+  options.split_when_idle = false;
+  const auto result = download_file(options);
+  REQUIRE(result);
+  CHECK(result->restarts == 0);
+  CHECK(sha256_hex(read_file(result->path)) == content_sha256(21, kSize));
 }
 
 TEST_CASE("download throughput, 1 vs 8 connections", "[.][benchmark-download]") {
