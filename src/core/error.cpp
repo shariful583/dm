@@ -35,6 +35,8 @@ std::string_view to_string(ErrorCode code) noexcept {
     return "remote_changed";
   case ErrorCode::LinkExpired:
     return "link_expired";
+  case ErrorCode::ChecksumMismatch:
+    return "checksum_mismatch";
   }
   return "unknown";
 }

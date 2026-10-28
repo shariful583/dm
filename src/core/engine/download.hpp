@@ -15,6 +15,7 @@
 #include "core/limiter/rate_limiter.hpp"
 #include "core/net/probe.hpp"
 #include "core/net/request.hpp"
+#include "core/verify/checksum.hpp"
 
 namespace lanes::core::engine {
 
@@ -80,6 +81,10 @@ struct DownloadOptions {
   // All apply at once. A connection pauses while any bucket is empty; nothing sleeps.
   std::uint64_t speed_limit = 0;
   std::vector<std::shared_ptr<limiter::RateLimiter>> limiters;
+
+  // Verified before the .part file is renamed; a mismatch fails with ChecksumMismatch and keeps
+  // the .part file (without a resume sidecar: its content is wrong, a rerun starts over).
+  std::optional<verify::Checksum> checksum;
 
   // Called on the download thread at most every `progress_interval`, and once at the end.
   std::function<void(const DownloadProgress &)> on_progress;

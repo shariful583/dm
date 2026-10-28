@@ -1313,6 +1313,20 @@ Result<DownloadResult> Downloader::run() {
     (void)file_.set_sparse(false); // fully written: make it an ordinary file
   }
   file_.close();
+  if (options_.checksum) {
+    auto actual = verify::hash_file(part_path_, options_.checksum->algorithm, stop_);
+    if (!actual) {
+      return make_error(actual.error());
+    }
+    if (*actual != options_.checksum->hex) {
+      (void)platform::remove_file(sidecar_path_); // the bytes are wrong: nothing to resume
+      return make_error(ErrorCode::ChecksumMismatch,
+                        std::string(verify::to_string(options_.checksum->algorithm)) +
+                            " mismatch: expected " + options_.checksum->hex + ", got " + *actual +
+                            " (the download was kept as '" +
+                            platform::path_to_utf8(part_path_.filename()) + "')");
+    }
+  }
   if (auto ok = platform::atomic_replace(part_path_, final_path_); !ok) {
     return make_error(ok.error());
   }

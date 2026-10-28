@@ -4,6 +4,7 @@ find_package(Catch2 3 CONFIG REQUIRED)
 include(Catch)
 
 add_executable(lanes_tests
+    cli/format_test.cpp
     core/error_test.cpp
     core/version_test.cpp
     core/engine/speed_meter_test.cpp
@@ -13,7 +14,8 @@ add_executable(lanes_tests
     core/platform/path_test.cpp
     testserver/content_test.cpp
     testserver/test_server_test.cpp)
-target_link_libraries(lanes_tests PRIVATE lanes::core lanes::testserver Catch2::Catch2WithMain)
+target_link_libraries(lanes_tests PRIVATE
+    lanes::core lanes_cli_lib lanes::testserver Catch2::Catch2WithMain)
 lanes_set_compiler_options(lanes_tests)
 
 if(WIN32)
@@ -25,17 +27,20 @@ if(WIN32)
     lanes_set_compiler_options(lanes_test_downloader)
 
     target_sources(lanes_tests PRIVATE
+        cli/cli_test.cpp
         core/engine/download_test.cpp
         core/engine/limit_test.cpp
         core/engine/resume_test.cpp
         core/engine/retry_test.cpp
         core/platform/file_test.cpp
         core/platform/process_test.cpp
-        core/resume/sidecar_test.cpp)
+        core/resume/sidecar_test.cpp
+        core/verify/checksum_test.cpp)
     target_compile_definitions(lanes_tests PRIVATE
         LANES_TEST_CHILD_PATH="$<TARGET_FILE:lanes_test_child>"
-        LANES_TEST_DOWNLOADER_PATH="$<TARGET_FILE:lanes_test_downloader>")
-    add_dependencies(lanes_tests lanes_test_child lanes_test_downloader)
+        LANES_TEST_DOWNLOADER_PATH="$<TARGET_FILE:lanes_test_downloader>"
+        LANES_CLI_PATH="$<TARGET_FILE:lanes_cli>")
+    add_dependencies(lanes_tests lanes_test_child lanes_test_downloader lanes_cli)
 endif()
 
 catch_discover_tests(lanes_tests)

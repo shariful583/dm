@@ -2,6 +2,7 @@
 
 find_package(CURL CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED)
 find_package(tl-expected CONFIG REQUIRED)
 
 configure_file(version.hpp.in ${CMAKE_CURRENT_BINARY_DIR}/generated/core/version.hpp @ONLY)
@@ -15,12 +16,14 @@ add_library(lanes_core STATIC
     net/request.cpp
     limiter/rate_limiter.cpp
     platform/path.cpp
-    resume/sidecar.cpp)
+    resume/sidecar.cpp
+    verify/checksum.cpp)
 add_library(lanes::core ALIAS lanes_core)
 
 # OS-specific code lives only in platform/. POSIX versions come with the Linux port.
 if(WIN32)
     target_sources(lanes_core PRIVATE
+        platform/console_win.cpp
         platform/file_win.cpp
         platform/fs_win.cpp
         platform/process_win.cpp
@@ -32,5 +35,5 @@ target_include_directories(lanes_core PUBLIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_link_libraries(lanes_core
     PUBLIC tl::expected
-    PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
+    PRIVATE CURL::libcurl nlohmann_json::nlohmann_json OpenSSL::Crypto)
 lanes_set_compiler_options(lanes_core)

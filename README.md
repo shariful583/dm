@@ -5,8 +5,21 @@ A native C++ download manager. Each file is downloaded over several parallel con
 pause/resume, queues, a scheduler, a speed limiter, HLS/DASH streams, video sites via yt-dlp,
 and a Chrome/Edge extension.
 
-**Status:** early development. The project skeleton builds and tests; the download engine is not
-written yet.
+**Status:** early development. The download engine (parallel connections, dynamic splitting,
+crash-safe resume, retries, speed limits) and the `lanes` command line work; queues, video sites,
+the GUI and the browser extension are still to come.
+
+## Command line
+
+```
+lanes get <url> [-o FILE|DIR\] [-c 8] [--limit 2M] [--sha256 HEX] [-H "Name: value"]
+                [--cookie ..] [--referer ..] [-A agent] [--user name:pass] [--proxy url]
+lanes info <url>
+```
+
+`lanes get` shows a live progress line with a connection map (`█` done, `▒` partly, `░` not
+yet). Ctrl+C pauses; running the same command again resumes where it stopped. If a link expired,
+run `lanes get <new-url> -o <same file>` to continue with the new address.
 
 ## Building (Windows)
 
