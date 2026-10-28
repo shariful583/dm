@@ -13,6 +13,7 @@ add_library(lanes_core STATIC
     net/curl.cpp
     net/probe.cpp
     net/request.cpp
+    limiter/rate_limiter.cpp
     platform/path.cpp
     resume/sidecar.cpp)
 add_library(lanes::core ALIAS lanes_core)

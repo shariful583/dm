@@ -61,6 +61,7 @@ struct Connection {
   std::string buffer;               // received, not yet written
   bool started = false;             // response headers checked
   bool reached_end = false;         // stopped itself at `end`
+  bool paused = false;              // waiting for speed-limit tokens (CURL_WRITEFUNC_PAUSE)
   bool finished = false;
   CURLcode result = CURLE_OK;
   std::optional<Error> error;
@@ -263,6 +264,10 @@ private:
     Clock::time_point not_before{};
   };
   std::vector<PendingRetry> pending_;
+  std::vector<std::shared_ptr<limiter::RateLimiter>> limiters_; // this download's + shared ones
+  bool limited() const;
+  bool tokens_available() const;
+  void resume_paused();
   std::size_t max_active_ = 1; // connection limit; lowered when the server pushes back
   int retries_ = 0;
   std::minstd_rand rng_{std::random_device{}()};
@@ -289,6 +294,12 @@ std::size_t Downloader::on_write(char *data, std::size_t size, std::size_t count
       return CURL_WRITEFUNC_ERROR;
     }
   }
+  // Speed limit: no tokens → pause; curl delivers this same chunk again after the event loop
+  // unpauses the connection. Never sleep here: it would stall every connection (§4.6).
+  if (!self.limiters_.empty() && !self.tokens_available()) {
+    c.paused = true;
+    return CURL_WRITEFUNC_PAUSE;
+  }
 
   // Never write past the segment's (possibly shrunk) end: those bytes belong to another
   // connection.
@@ -298,6 +309,9 @@ std::size_t Downloader::on_write(char *data, std::size_t size, std::size_t count
   }
   c.buffer.append(data, take);
   self.received_ += take;
+  for (const auto &limiter : self.limiters_) {
+    limiter->consume(take);
+  }
 
   const bool complete = c.length() && c.received() == *c.length();
   if (c.buffer.size() >= self.write_buffer_size_ || complete) {
@@ -651,6 +665,20 @@ Downloader::make_connection(std::uint64_t start, std::optional<std::uint64_t> en
     const std::string range = std::to_string(start) + "-" + std::to_string(*end);
     curl_easy_setopt(easy, CURLOPT_RANGE, range.c_str());
   }
+  if (limited()) {
+    std::uint64_t slowest = 0;
+    for (const auto &limiter : limiters_) {
+      if (const auto rate = limiter->rate(); rate > 0 && (slowest == 0 || rate < slowest)) {
+        slowest = rate;
+      }
+    }
+    // Reads of ~100 ms worth keep a throttled flow smooth instead of 512 KiB lurches.
+    const auto chunk = std::clamp<std::uint64_t>(slowest / 10, 16 << 10, kReceiveChunk);
+    curl_easy_setopt(easy, CURLOPT_BUFFERSIZE, static_cast<long>(chunk));
+    // A connection waiting for tokens receives nothing for a while: only a truly dead one
+    // (nothing at all for low_speed_time) should count as stalled.
+    curl_easy_setopt(easy, CURLOPT_LOW_SPEED_LIMIT, 1L);
+  }
   c->buffer.reserve(write_buffer_size_ + kReceiveChunk);
   return c;
 }
@@ -668,6 +696,31 @@ Result<void> Downloader::launch(std::uint64_t start, std::optional<std::uint64_t
   curl_multi_add_handle(multi_, (*c)->easy.get());
   connections_.push_back(std::move(*c));
   return {};
+}
+
+bool Downloader::limited() const {
+  return std::any_of(limiters_.begin(), limiters_.end(),
+                     [](const auto &limiter) { return limiter->rate() > 0; });
+}
+
+bool Downloader::tokens_available() const {
+  const auto now = limiter::RateLimiter::Clock::now();
+  return std::all_of(limiters_.begin(), limiters_.end(),
+                     [&](const auto &limiter) { return limiter->available(now); });
+}
+
+// Unpauses connections once every bucket has tokens again. curl may deliver the held chunk from
+// inside curl_easy_pause, which can pause the connection again: that is fine.
+void Downloader::resume_paused() {
+  if (!tokens_available()) {
+    return;
+  }
+  for (auto &c : connections_) {
+    if (c->paused && !c->finished && c->easy) {
+      c->paused = false;
+      curl_easy_pause(c->easy.get(), CURLPAUSE_CONT);
+    }
+  }
 }
 
 std::size_t Downloader::active_connections() const {
@@ -1031,6 +1084,9 @@ Downloader::Outcome Downloader::transfer() {
       break;
     }
     const auto now = Clock::now();
+    if (!limiters_.empty()) {
+      resume_paused();
+    }
     if (!pending_.empty()) {
       if (auto launched = launch_due_retries(now); !launched) {
         failure_ = launched.error();
@@ -1038,7 +1094,8 @@ Downloader::Outcome Downloader::transfer() {
         break;
       }
     }
-    if (dynamic() && options_.replace_slow_connections) {
+    // Under a speed limit every connection is slow on purpose: nothing to replace.
+    if (dynamic() && options_.replace_slow_connections && !limited()) {
       if (auto replaced = replace_slow_connections(now); !replaced) {
         failure_ = replaced.error();
         outcome = Outcome::Failed;
@@ -1104,6 +1161,11 @@ void Downloader::report_progress(bool force) {
 Result<DownloadResult> Downloader::run() {
   if (options_.connections < 1 || options_.connections > kMaxConnections) {
     return make_error(ErrorCode::InvalidArgument, "connections must be between 1 and 32");
+  }
+  limiters_ = options_.limiters;
+  std::erase(limiters_, nullptr);
+  if (options_.speed_limit > 0) {
+    limiters_.push_back(std::make_shared<limiter::RateLimiter>(options_.speed_limit));
   }
   // A caller-given name is known before probing, so a refused probe can be recognised as an
   // expired address of a download that already has data.

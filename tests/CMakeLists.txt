@@ -7,6 +7,7 @@ add_executable(lanes_tests
     core/error_test.cpp
     core/version_test.cpp
     core/engine/speed_meter_test.cpp
+    core/limiter/rate_limiter_test.cpp
     core/net/probe_test.cpp
     core/net/request_test.cpp
     core/platform/path_test.cpp
@@ -25,6 +26,7 @@ if(WIN32)
 
     target_sources(lanes_tests PRIVATE
         core/engine/download_test.cpp
+        core/engine/limit_test.cpp
         core/engine/resume_test.cpp
         core/engine/retry_test.cpp
         core/platform/file_test.cpp

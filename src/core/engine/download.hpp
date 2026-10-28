@@ -5,12 +5,14 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <stop_token>
 #include <string>
 #include <vector>
 
 #include "core/error.hpp"
+#include "core/limiter/rate_limiter.hpp"
 #include "core/net/probe.hpp"
 #include "core/net/request.hpp"
 
@@ -72,6 +74,12 @@ struct DownloadOptions {
   // connections lower the connection count to what the server still accepts.
   int max_retries = 10;
   std::chrono::milliseconds retry_delay{1000};
+
+  // Speed limits. `speed_limit` caps this download (bytes/s, 0 = none);
+  // `limiters` are shared buckets (e.g. the global limit) whose rate may change at any time.
+  // All apply at once. A connection pauses while any bucket is empty; nothing sleeps.
+  std::uint64_t speed_limit = 0;
+  std::vector<std::shared_ptr<limiter::RateLimiter>> limiters;
 
   // Called on the download thread at most every `progress_interval`, and once at the end.
   std::function<void(const DownloadProgress &)> on_progress;
