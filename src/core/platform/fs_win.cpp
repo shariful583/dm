@@ -164,6 +164,38 @@ Result<void> write_file_atomic(const std::filesystem::path &path, std::string_vi
   return atomic_replace(tmp, path);
 }
 
+Result<std::string> read_small_file(const std::filesystem::path &path, std::uint64_t max_size) {
+  auto file = File::open(path, OpenMode::ReadOnly);
+  if (!file) {
+    return make_error(file.error());
+  }
+  auto size = file->size();
+  if (!size) {
+    return make_error(size.error());
+  }
+  if (*size > max_size) {
+    return make_error(ErrorCode::FileTooLarge,
+                      "'" + path_to_utf8(path) + "' is unexpectedly large");
+  }
+  std::string data(static_cast<std::size_t>(*size), '\0');
+  auto read = file->read_at(0, data);
+  if (!read) {
+    return make_error(read.error());
+  }
+  data.resize(*read);
+  return data;
+}
+
+Result<void> remove_file(const std::filesystem::path &path) {
+  if (!::DeleteFileW(to_long_path(path).c_str())) {
+    const DWORD code = ::GetLastError();
+    if (code != ERROR_FILE_NOT_FOUND && code != ERROR_PATH_NOT_FOUND) {
+      return make_error(win::win32_error(code, "delete file", path));
+    }
+  }
+  return {};
+}
+
 Result<std::uint64_t> allocated_size(const std::filesystem::path &path) {
   DWORD high = 0;
   ::SetLastError(NO_ERROR);

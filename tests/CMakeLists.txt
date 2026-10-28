@@ -16,17 +16,23 @@ target_link_libraries(lanes_tests PRIVATE lanes::core lanes::testserver Catch2::
 lanes_set_compiler_options(lanes_tests)
 
 if(WIN32)
-    # Helper program driven by the process-runner tests.
+    # Helper programs the tests run as child processes.
     add_executable(lanes_test_child helpers/test_child.cpp)
     lanes_set_compiler_options(lanes_test_child)
+    add_executable(lanes_test_downloader helpers/test_downloader.cpp) # killed mid-download
+    target_link_libraries(lanes_test_downloader PRIVATE lanes::core)
+    lanes_set_compiler_options(lanes_test_downloader)
 
     target_sources(lanes_tests PRIVATE
         core/engine/download_test.cpp
+        core/engine/resume_test.cpp
         core/platform/file_test.cpp
-        core/platform/process_test.cpp)
+        core/platform/process_test.cpp
+        core/resume/sidecar_test.cpp)
     target_compile_definitions(lanes_tests PRIVATE
-        LANES_TEST_CHILD_PATH="$<TARGET_FILE:lanes_test_child>")
-    add_dependencies(lanes_tests lanes_test_child)
+        LANES_TEST_CHILD_PATH="$<TARGET_FILE:lanes_test_child>"
+        LANES_TEST_DOWNLOADER_PATH="$<TARGET_FILE:lanes_test_downloader>")
+    add_dependencies(lanes_tests lanes_test_child lanes_test_downloader)
 endif()
 
 catch_discover_tests(lanes_tests)

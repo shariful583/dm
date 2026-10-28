@@ -45,6 +45,13 @@ Result<void> atomic_replace(const std::filesystem::path &from, const std::filesy
 // `path` always holds either the old or the complete new content. Thread-safe for distinct paths.
 Result<void> write_file_atomic(const std::filesystem::path &path, std::string_view data);
 
+// Whole content of a small file. FileTooLarge if it is bigger than `max_size`. Thread-safe.
+Result<std::string> read_small_file(const std::filesystem::path &path,
+                                    std::uint64_t max_size = 16 << 20);
+
+// Deletes a file if it exists (long-path aware). Thread-safe.
+Result<void> remove_file(const std::filesystem::path &path);
+
 // Bytes the file actually occupies on disk (less than its size while sparse). Thread-safe.
 Result<std::uint64_t> allocated_size(const std::filesystem::path &path);
 

@@ -209,6 +209,23 @@ std::string filename_from_url(std::string_view url) {
   return percent_decode(slash == std::string_view::npos ? p : p.substr(slash + 1));
 }
 
+std::string strip_credentials(std::string_view url) {
+  ensure_curl_initialized();
+  UrlHandle handle(curl_url());
+  const std::string copy(url);
+  if (!handle || curl_url_set(handle.get(), CURLUPART_URL, copy.c_str(), 0) != CURLUE_OK) {
+    return copy;
+  }
+  curl_url_set(handle.get(), CURLUPART_USER, nullptr, 0);
+  curl_url_set(handle.get(), CURLUPART_PASSWORD, nullptr, 0);
+  char *raw = nullptr;
+  if (curl_url_get(handle.get(), CURLUPART_URL, &raw, 0) != CURLUE_OK) {
+    return copy;
+  }
+  const CurlString clean(raw);
+  return std::string(clean.get());
+}
+
 std::optional<std::string> filename_from_content_disposition(std::string_view header) {
   std::optional<std::string> plain;
   std::optional<std::string> extended;

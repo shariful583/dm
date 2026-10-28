@@ -31,6 +31,10 @@ std::string_view to_string(ErrorCode code) noexcept {
     return "http";
   case ErrorCode::Cancelled:
     return "cancelled";
+  case ErrorCode::RemoteChanged:
+    return "remote_changed";
+  case ErrorCode::LinkExpired:
+    return "link_expired";
   }
   return "unknown";
 }

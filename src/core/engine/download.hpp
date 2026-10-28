@@ -55,6 +55,16 @@ struct DownloadOptions {
   // restarted on a fresh connection from where it stopped; at most 3 times per byte range.
   bool replace_slow_connections = true;
 
+  // Resume. Range-capable downloads of known size keep `<file>.lanes.json` next
+  // to `<file>.part`, checkpointed every `checkpoint_interval` and on cancel/failure (data flushed
+  // to disk before the sidecar is replaced). With `resume`, an existing pair continues where it
+  // stopped if the server's file is unchanged (size, ETag, Last-Modified); otherwise the result is
+  // RemoteChanged, or a fresh start with `restart_if_changed`. To refresh an expired address,
+  // run again with the new URL and the same `filename`.
+  bool resume = true;
+  bool restart_if_changed = false;
+  std::chrono::milliseconds checkpoint_interval{1000};
+
   // Called on the download thread at most every `progress_interval`, and once at the end.
   std::function<void(const DownloadProgress &)> on_progress;
   std::chrono::milliseconds progress_interval{250};
@@ -63,9 +73,10 @@ struct DownloadOptions {
 struct DownloadResult {
   std::filesystem::path path; // final file
   std::uint64_t size = 0;
-  int connections = 1; // connections started with (1 after a fallback to one connection)
-  int splits = 0;      // segments split for an idle connection
-  int restarts = 0;    // slow connections replaced
+  int connections = 1;            // connections started with (1 after a fallback to one connection)
+  int splits = 0;                 // segments split for an idle connection
+  int restarts = 0;               // slow connections replaced
+  std::uint64_t resumed_from = 0; // bytes already on disk from an earlier run
   net::ProbeResult info;
 };
 
@@ -78,7 +89,8 @@ struct DownloadResult {
 //
 // Errors: those of net::probe, Http (status in Error::http_status), Network/Timeout, NoSpace and
 // FileTooLarge (checked before writing), Io/AccessDenied for file problems, InvalidArgument for
-// out-of-range options.
+// out-of-range options, RemoteChanged (see `resume`), LinkExpired (HTTP 403/410 once data exists:
+// the address needs refreshing; the data is kept).
 Result<DownloadResult> download_file(const DownloadOptions &options, std::stop_token stop = {});
 
 } // namespace lanes::core::engine

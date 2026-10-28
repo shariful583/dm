@@ -25,6 +25,8 @@ enum class ErrorCode {
   Network,
   Http,
   Cancelled,
+  RemoteChanged, // the file on the server changed since the download started (size/ETag)
+  LinkExpired,   // 403/410 on a download with progress: needs a new address (§4.4)
 };
 
 // Human-readable, stable name of an ErrorCode (e.g. "invalid_argument"). Thread-safe.

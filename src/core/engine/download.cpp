@@ -3,13 +3,17 @@
 
 #include <algorithm>
 #include <charconv>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
+#include <thread>
 
 #include "core/engine/speed_meter.hpp"
 #include "core/net/curl.hpp"
 #include "core/platform/file.hpp"
 #include "core/platform/fs.hpp"
 #include "core/platform/path.hpp"
+#include "core/resume/sidecar.hpp"
 
 namespace lanes::core::engine {
 
@@ -106,10 +110,83 @@ std::optional<std::pair<std::uint64_t, std::uint64_t>> parse_content_range(std::
   return std::pair{first, total};
 }
 
+// Makes checkpoints durable off the event-loop thread. FlushFileBuffers and the sidecar write can
+// block for hundreds of milliseconds on a busy or slow disk; on the loop they stalled every
+// connection (measured: a 0.13 s parallel download took 1 s under test load).
+//
+// Ordering (§4.4): the snapshot is taken after the loop wrote the bytes it lists, and the worker
+// flushes the file before writing the sidecar, so the sidecar never claims bytes not on disk.
+// Only the newest pending snapshot is written. Thread-safe.
+class CheckpointWriter {
+public:
+  CheckpointWriter(platform::File &file, fs::path sidecar)
+      : file_(file), sidecar_(std::move(sidecar)),
+        thread_([this](std::stop_token stop) { run(std::move(stop)); }) {}
+  ~CheckpointWriter() { stop(); }
+  CheckpointWriter(const CheckpointWriter &) = delete;
+  CheckpointWriter &operator=(const CheckpointWriter &) = delete;
+
+  void submit(resume::ResumeState state) {
+    {
+      std::lock_guard lock(mutex_);
+      pending_ = std::move(state);
+    }
+    wake_.notify_one();
+  }
+
+  // Ends the worker after the write in progress; a pending snapshot is dropped. No sidecar write
+  // happens after this returns.
+  void stop() {
+    if (thread_.joinable()) {
+      thread_.request_stop();
+      thread_.join();
+    }
+  }
+
+  std::optional<Error> error() const {
+    std::lock_guard lock(mutex_);
+    return error_;
+  }
+
+private:
+  void run(std::stop_token stop) {
+    for (;;) {
+      resume::ResumeState state;
+      {
+        std::unique_lock lock(mutex_);
+        if (!wake_.wait(lock, stop, [&] { return pending_.has_value(); })) {
+          return; // stop requested
+        }
+        state = std::move(*pending_);
+        pending_.reset();
+      }
+      Result<void> ok = file_.flush();
+      if (ok) {
+        ok = resume::save(sidecar_, state);
+      }
+      if (!ok) {
+        std::lock_guard lock(mutex_);
+        error_ = ok.error();
+      }
+    }
+  }
+
+  platform::File &file_; // flush() may run concurrently with the loop's writes
+  fs::path sidecar_;
+  mutable std::mutex mutex_;
+  std::condition_variable_any wake_;
+  std::optional<resume::ResumeState> pending_;
+  std::optional<Error> error_;
+  std::jthread thread_; // last: starts after the members it uses
+};
+
 class Downloader {
 public:
   Downloader(const DownloadOptions &options, std::stop_token stop)
       : options_(options), stop_(std::move(stop)) {}
+  ~Downloader() { stop_checkpoints(); } // before file_ goes away
+  Downloader(const Downloader &) = delete;
+  Downloader &operator=(const Downloader &) = delete;
 
   Result<DownloadResult> run();
 
@@ -119,7 +196,18 @@ private:
   static std::size_t on_write(char *data, std::size_t size, std::size_t count, void *user);
 
   Result<void> on_response(Connection &c);
+  void set_paths(const std::string &name);
   Result<void> prepare_file();
+  Result<bool> open_existing_part();
+  std::optional<resume::ResumeState> load_resume_state();
+  Result<void> plan_fresh(int segments);
+  Result<void> plan_resumed(const resume::ResumeState &saved);
+  Result<void> add_ranges(std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges);
+  Result<void> checkpoint();
+  Result<void> checkpoint_now();
+  void stop_checkpoints();
+  Result<resume::ResumeState> snapshot();
+  Error link_expired_or(Error error) const;
   Result<void> flush(Connection &c);
   Result<std::unique_ptr<Connection>>
   make_connection(std::uint64_t start, std::optional<std::uint64_t> end, bool ranged);
@@ -132,14 +220,19 @@ private:
   void record_failure(Connection &c);
   void keep_partial();
   void report_progress(bool force);
-  bool dynamic() const { return segmented_; }
+  bool dynamic() const { return ranged_; }
 
   const DownloadOptions &options_;
   std::stop_token stop_;
 
   std::optional<net::ProbeResult> info_;
   std::vector<std::unique_ptr<Connection>> connections_;
-  bool segmented_ = false; // ranged connections: may split and restart
+  // Ranged connections over a known size: may split and restart, and are resumable (checkpointed).
+  bool ranged_ = false;
+  fs::path sidecar_path_;
+  std::unique_ptr<CheckpointWriter> checkpointer_; // uses file_: stopped in ~Downloader
+  Clock::time_point last_checkpoint_{};
+  std::uint64_t resumed_from_ = 0;
   std::size_t write_buffer_size_ = kMaxWriteBuffer;
   bool range_ignored_ = false;
   std::optional<Error> failure_;
@@ -246,14 +339,19 @@ Result<void> Downloader::on_response(Connection &c) {
   return {};
 }
 
-// Final/part paths, folder, space check, .part file sized up front (sparse where supported).
-Result<void> Downloader::prepare_file() {
-  const std::string name =
-      options_.filename.empty() ? info_->filename : platform::sanitize_filename(options_.filename);
+void Downloader::set_paths(const std::string &name) {
   final_path_ = options_.directory / platform::path_from_utf8(name);
   part_path_ = final_path_;
   part_path_ += ".part";
+  sidecar_path_ = resume::sidecar_path(final_path_);
+}
 
+// New .part file: folder, space check, sized up front (sparse where supported).
+Result<void> Downloader::prepare_file() {
+  if (final_path_.empty()) {
+    set_paths(options_.filename.empty() ? info_->filename
+                                        : platform::sanitize_filename(options_.filename));
+  }
   if (auto ok = platform::create_directories(options_.directory); !ok) {
     return ok;
   }
@@ -275,6 +373,217 @@ Result<void> Downloader::prepare_file() {
     sparse_ = *sparse;
   }
   return {};
+}
+
+// Reopens the .part file of an earlier run without truncating it. False if it is missing or has
+// the wrong size (then the download starts over).
+Result<bool> Downloader::open_existing_part() {
+  auto file = platform::File::open(part_path_, platform::OpenMode::ReadWrite);
+  if (!file) {
+    return file.error().code == ErrorCode::NotFound ? Result<bool>(false)
+                                                    : make_error(file.error());
+  }
+  auto size = file->size();
+  if (!size) {
+    return make_error(size.error());
+  }
+  if (*size != *info_->size) {
+    return false;
+  }
+  file_ = std::move(*file);
+  auto sparse = file_.set_sparse(true); // holes may remain: keep them unallocated
+  sparse_ = sparse && *sparse;
+  return true;
+}
+
+// The saved state of an earlier run, if it exists, matches the .part file and the server's file
+// is unchanged. A changed file is reported through failure_ (unless restarting is allowed).
+std::optional<resume::ResumeState> Downloader::load_resume_state() {
+  auto loaded = resume::load(sidecar_path_);
+  if (!loaded || !*loaded) {
+    return std::nullopt; // none, or unreadable/corrupt: cannot be trusted, start over
+  }
+  const resume::ResumeState &saved = **loaded;
+  const bool size_changed = saved.size != *info_->size;
+  const bool etag_changed =
+      !saved.etag.empty() && !info_->etag.empty() && saved.etag != info_->etag;
+  const bool date_changed = saved.etag.empty() && info_->etag.empty() &&
+                            !saved.last_modified.empty() && !info_->last_modified.empty() &&
+                            saved.last_modified != info_->last_modified;
+  if (size_changed || etag_changed || date_changed) {
+    if (!options_.restart_if_changed) {
+      failure_ = Error{ErrorCode::RemoteChanged,
+                       "the file on the server changed since this download started (" +
+                           std::string(size_changed   ? "size"
+                                       : etag_changed ? "ETag"
+                                                      : "date") +
+                           " differs); the " + std::to_string(saved.done_bytes()) +
+                           " bytes already downloaded cannot be reused",
+                       0};
+    }
+    return std::nullopt;
+  }
+  return **loaded;
+}
+
+// Fresh ranged download: `segments` equal ranges.
+Result<void> Downloader::plan_fresh(int segments) {
+  const std::uint64_t size = *info_->size;
+  const std::uint64_t chunk = size / static_cast<std::uint64_t>(segments);
+  std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+  for (int i = 0; i < segments; ++i) {
+    const std::uint64_t start = chunk * static_cast<std::uint64_t>(i);
+    ranges.emplace_back(start, i == segments - 1 ? size - 1 : start + chunk - 1);
+  }
+  return add_ranges(std::move(ranges));
+}
+
+// Resumed download: finished bytes become completed segments; the gaps are fetched, halved until
+// every connection has work (or the pieces would get too small).
+Result<void> Downloader::plan_resumed(const resume::ResumeState &saved) {
+  std::vector<std::pair<std::uint64_t, std::uint64_t>> missing;
+  for (const auto &s : saved.segments) {
+    if (s.done > 0) {
+      auto done = std::make_unique<Connection>();
+      done->owner = this;
+      done->start = s.start;
+      done->end = s.start + s.done - 1;
+      done->ranged = true;
+      done->written = s.done;
+      done->started = true;
+      done->finished = true;
+      connections_.push_back(std::move(done));
+    }
+    if (s.done < s.length()) {
+      missing.emplace_back(s.start + s.done, s.end);
+    }
+  }
+  const auto length = [](const auto &r) { return r.second - r.first + 1; };
+  while (missing.size() < static_cast<std::size_t>(options_.connections)) {
+    auto largest =
+        std::max_element(missing.begin(), missing.end(),
+                         [&](const auto &a, const auto &b) { return length(a) < length(b); });
+    if (largest == missing.end() || length(*largest) / 2 < options_.min_segment_size) {
+      break;
+    }
+    std::uint64_t middle = largest->first + length(*largest) / 2;
+    if (const std::uint64_t aligned = middle - middle % kSplitAlignment; aligned > largest->first) {
+      middle = aligned;
+    }
+    const std::pair<std::uint64_t, std::uint64_t> second{middle, largest->second};
+    largest->second = middle - 1;
+    missing.push_back(second);
+  }
+  std::sort(missing.begin(), missing.end());
+  resumed_from_ = saved.done_bytes();
+  received_ = resumed_from_;
+  return add_ranges(std::move(missing));
+}
+
+Result<void> Downloader::add_ranges(std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges) {
+  write_buffer_size_ = std::clamp(kTotalWriteBuffer / std::max<std::size_t>(ranges.size(), 1),
+                                  kMinWriteBuffer, kMaxWriteBuffer);
+  for (const auto &[start, end] : ranges) {
+    auto c = make_connection(start, end, true);
+    if (!c) {
+      return make_error(c.error());
+    }
+    connections_.push_back(std::move(*c));
+  }
+  return {};
+}
+
+// Queues a checkpoint: buffered bytes are written here (fast, into the OS cache); the background
+// writer makes them durable and then replaces the sidecar.
+Result<void> Downloader::checkpoint() {
+  if (!ranged_ || !file_.is_open()) {
+    return {};
+  }
+  if (!checkpointer_) {
+    checkpointer_ = std::make_unique<CheckpointWriter>(file_, sidecar_path_);
+  }
+  if (auto failed = checkpointer_->error()) {
+    return make_error(*failed);
+  }
+  auto state = snapshot();
+  if (!state) {
+    return make_error(state.error());
+  }
+  last_checkpoint_ = Clock::now();
+  checkpointer_->submit(std::move(*state));
+  return {};
+}
+
+// Final checkpoint on cancel/failure, synchronously: stop the writer, flush, save.
+Result<void> Downloader::checkpoint_now() {
+  if (!ranged_ || !file_.is_open()) {
+    return {};
+  }
+  stop_checkpoints();
+  auto state = snapshot();
+  if (!state) {
+    return make_error(state.error());
+  }
+  if (auto ok = file_.flush(); !ok) {
+    return ok;
+  }
+  return resume::save(sidecar_path_, *state);
+}
+
+void Downloader::stop_checkpoints() {
+  if (checkpointer_) {
+    checkpointer_->stop();
+  }
+}
+
+// Writes every buffered byte, then describes what is in the file.
+Result<resume::ResumeState> Downloader::snapshot() {
+  for (auto &c : connections_) {
+    if (auto ok = flush(*c); !ok) {
+      return make_error(ok.error());
+    }
+  }
+  std::vector<const Connection *> parts;
+  for (const auto &c : connections_) {
+    if (!c->empty) {
+      parts.push_back(c.get());
+    }
+  }
+  std::sort(parts.begin(), parts.end(),
+            [](const Connection *a, const Connection *b) { return a->start < b->start; });
+  resume::ResumeState state;
+  state.url = net::strip_credentials(options_.request.url);
+  state.final_url = net::strip_credentials(info_->final_url);
+  state.filename = platform::path_to_utf8(final_path_.filename());
+  state.size = *info_->size;
+  state.etag = info_->etag;
+  state.last_modified = info_->last_modified;
+  for (const Connection *c : parts) {
+    resume::SavedSegment s{c->start, *c->end, c->written};
+    // Merge into a completely written predecessor: keeps the file short after many splits.
+    if (!state.segments.empty() && state.segments.back().done == state.segments.back().length()) {
+      auto &prev = state.segments.back();
+      prev.done += s.done;
+      prev.end = s.end;
+    } else {
+      state.segments.push_back(s);
+    }
+  }
+  return state;
+}
+
+// 403/410 after data has been downloaded almost always means the signed/temporary address has
+// expired: report it so the front-end can offer "refresh download address".
+Error Downloader::link_expired_or(Error error) const {
+  const bool has_data = received_ > 0 || resumed_from_ > 0;
+  if (error.code == ErrorCode::Http && (error.http_status == 403 || error.http_status == 410) &&
+      has_data) {
+    error.code = ErrorCode::LinkExpired;
+    error.message = "the download address no longer works (HTTP " +
+                    std::to_string(error.http_status) +
+                    "); refresh the address to continue — downloaded data is kept";
+  }
+  return error;
 }
 
 Result<void> Downloader::flush(Connection &c) {
@@ -456,9 +765,14 @@ Downloader::Outcome Downloader::transfer() {
                     static_cast<long>(options_.max_connections_per_host));
   finished_ = 0;
   for (auto &c : connections_) {
-    curl_multi_add_handle(multi_, c->easy.get());
+    if (c->finished) {
+      ++finished_; // completed in an earlier run
+    } else {
+      curl_multi_add_handle(multi_, c->easy.get());
+    }
   }
   last_speed_check_ = Clock::now();
+  last_checkpoint_ = Clock::now();
 
   Outcome outcome = Outcome::Done;
   while (finished_ < connections_.size()) {
@@ -513,6 +827,13 @@ Downloader::Outcome Downloader::transfer() {
         break;
       }
     }
+    if (ranged_ && now - last_checkpoint_ >= options_.checkpoint_interval) {
+      if (auto saved = checkpoint(); !saved) {
+        failure_ = saved.error();
+        outcome = Outcome::Failed;
+        break;
+      }
+    }
     report_progress(false);
     // While data keeps arriving, go straight back to reading; wait only when a round was idle.
     if (received_ == received_before && finished_ < connections_.size()) {
@@ -528,7 +849,7 @@ Downloader::Outcome Downloader::transfer() {
   return outcome;
 }
 
-// Writes out whatever arrived, so a later resume (step 7) can keep it.
+// Writes out whatever arrived and checkpoints it, so a later run can resume from here.
 void Downloader::keep_partial() {
   if (!file_.is_open()) {
     return;
@@ -536,6 +857,7 @@ void Downloader::keep_partial() {
   for (auto &c : connections_) {
     (void)flush(*c);
   }
+  (void)checkpoint_now();
   file_.close();
 }
 
@@ -565,43 +887,76 @@ Result<DownloadResult> Downloader::run() {
   if (options_.connections < 1 || options_.connections > kMaxConnections) {
     return make_error(ErrorCode::InvalidArgument, "connections must be between 1 and 32");
   }
+  // A caller-given name is known before probing, so a refused probe can be recognised as an
+  // expired address of a download that already has data.
+  if (!options_.filename.empty()) {
+    set_paths(platform::sanitize_filename(options_.filename));
+  }
   if (options_.probe) {
     info_ = options_.probe;
   } else if (options_.request.method != "POST") {
     auto probed = net::probe(options_.request);
     if (!probed) {
-      return make_error(probed.error());
+      Error error = probed.error();
+      if (!sidecar_path_.empty() && options_.resume) {
+        if (auto saved = resume::load(sidecar_path_); saved && *saved) {
+          resumed_from_ = (*saved)->done_bytes();
+          error = link_expired_or(std::move(error));
+        }
+      }
+      return make_error(std::move(error));
     }
     info_ = std::move(*probed);
   }
 
-  // Plan: equal ranges when the server supports them, else one whole-file transfer.
+  // Ranged plan when the server supports ranges and the size is known (also with one connection,
+  // so the download stays resumable); otherwise one whole-file transfer, not resumable.
+  ranged_ = info_ && info_->accepts_ranges && info_->size && *info_->size > 0 &&
+            options_.min_segment_size > 0;
   int segments = 1;
-  if (info_ && info_->accepts_ranges && info_->size && options_.min_segment_size > 0) {
-    const std::uint64_t by_size = *info_->size / options_.min_segment_size;
-    segments = static_cast<int>(std::min<std::uint64_t>(options_.connections, by_size));
-    segments = std::max(segments, 1);
-  }
-  write_buffer_size_ = std::clamp(kTotalWriteBuffer / static_cast<std::size_t>(segments),
-                                  kMinWriteBuffer, kMaxWriteBuffer);
-
-  if (segments > 1) {
-    segmented_ = true;
-    if (auto ok = prepare_file(); !ok) {
-      return make_error(ok.error());
+  if (ranged_) {
+    if (final_path_.empty()) {
+      set_paths(info_->filename);
     }
-    const std::uint64_t size = *info_->size;
-    const std::uint64_t chunk = size / static_cast<std::uint64_t>(segments);
-    for (int i = 0; i < segments; ++i) {
-      const std::uint64_t start = chunk * static_cast<std::uint64_t>(i);
-      const std::uint64_t end = (i == segments - 1) ? size - 1 : start + chunk - 1;
-      auto c = make_connection(start, end, true);
-      if (!c) {
-        return make_error(c.error());
+    std::optional<resume::ResumeState> saved;
+    if (options_.resume) {
+      saved = load_resume_state();
+      if (failure_) {
+        return make_error(*failure_); // RemoteChanged
       }
-      connections_.push_back(std::move(*c));
+    }
+    bool resumed = false;
+    if (saved) {
+      auto opened = open_existing_part();
+      if (!opened) {
+        return make_error(opened.error());
+      }
+      if (*opened) {
+        if (auto ok = plan_resumed(*saved); !ok) {
+          return make_error(ok.error());
+        }
+        resumed = true;
+      }
+    }
+    if (!resumed) {
+      const std::uint64_t by_size = *info_->size / options_.min_segment_size;
+      segments =
+          std::max(1, static_cast<int>(std::min<std::uint64_t>(options_.connections, by_size)));
+      if (auto ok = prepare_file(); !ok) {
+        return make_error(ok.error());
+      }
+      if (auto ok = plan_fresh(segments); !ok) {
+        return make_error(ok.error());
+      }
+      if (auto ok = checkpoint(); !ok) { // resumable from the very start
+        return make_error(ok.error());
+      }
+    } else {
+      segments = static_cast<int>(std::count_if(connections_.begin(), connections_.end(),
+                                                [](const auto &c) { return !c->finished; }));
     }
   } else {
+    write_buffer_size_ = kMaxWriteBuffer;
     auto c = make_connection(0, std::nullopt, false);
     if (!c) {
       return make_error(c.error());
@@ -609,16 +964,20 @@ Result<DownloadResult> Downloader::run() {
     connections_.push_back(std::move(*c));
   }
 
-  meter_.add(0);
+  meter_.add(received_);
   last_report_ = Clock::now();
   Outcome outcome = transfer();
 
   if (outcome == Outcome::RangeIgnored) {
-    // Start over with one whole-file transfer into the same (already sized) .part file.
+    // Start over with one whole-file transfer into the same (already sized) .part file; without
+    // ranges it cannot be resumed, so the sidecar goes.
+    stop_checkpoints();
+    (void)platform::remove_file(sidecar_path_);
     connections_.clear();
     received_ = 0;
+    resumed_from_ = 0;
     range_ignored_ = false;
-    segmented_ = false;
+    ranged_ = false;
     segments = 1;
     write_buffer_size_ = kMaxWriteBuffer;
     auto c = make_connection(0, std::nullopt, false);
@@ -635,7 +994,8 @@ Result<DownloadResult> Downloader::run() {
   }
   if (outcome != Outcome::Done) {
     keep_partial();
-    return make_error(failure_.value_or(Error{ErrorCode::Network, "download failed", 0}));
+    return make_error(
+        link_expired_or(failure_.value_or(Error{ErrorCode::Network, "download failed", 0})));
   }
 
   if (!file_.is_open()) { // empty body: no write callback ran
@@ -650,7 +1010,7 @@ Result<DownloadResult> Downloader::run() {
       return make_error(ok.error());
     }
     if (const auto len = c->length(); len && c->written != *len) {
-      file_.close();
+      keep_partial();
       return make_error(ErrorCode::Network, "connection ended early: received " +
                                                 std::to_string(c->written) + " of " +
                                                 std::to_string(*len) + " bytes");
@@ -658,10 +1018,11 @@ Result<DownloadResult> Downloader::run() {
     total += c->written;
   }
   if (info_->size && total != *info_->size) {
-    file_.close();
+    keep_partial();
     return make_error(ErrorCode::Network, "download incomplete: received " + std::to_string(total) +
                                               " of " + std::to_string(*info_->size) + " bytes");
   }
+  stop_checkpoints(); // complete: no sidecar write may follow the rename
   if (auto ok = file_.flush(); !ok) {
     return make_error(ok.error());
   }
@@ -672,12 +1033,15 @@ Result<DownloadResult> Downloader::run() {
   if (auto ok = platform::atomic_replace(part_path_, final_path_); !ok) {
     return make_error(ok.error());
   }
+  if (!sidecar_path_.empty()) {
+    (void)platform::remove_file(sidecar_path_); // done: nothing left to resume
+  }
 
   if (!info_->size) {
     info_->size = total;
   }
   report_progress(true);
-  return DownloadResult{final_path_, total, segments, splits_, restarts_, *info_};
+  return DownloadResult{final_path_, total, segments, splits_, restarts_, resumed_from_, *info_};
 }
 
 } // namespace

@@ -59,4 +59,8 @@ std::string filename_from_url(std::string_view url);
 // over filename. Returns UTF-8, not sanitized; nullopt if there is none. Thread-safe.
 std::optional<std::string> filename_from_content_disposition(std::string_view header);
 
+// `url` without embedded "user:password@" (for anything stored on disk, §9). Returns the input
+// unchanged if it cannot be parsed. Thread-safe.
+std::string strip_credentials(std::string_view url);
+
 } // namespace lanes::core::net
