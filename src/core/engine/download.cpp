@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <thread>
 
 #include "core/engine/speed_meter.hpp"
@@ -72,6 +73,7 @@ struct Connection {
   std::uint64_t checkpoint_received = 0;
   double speed = -1; // bytes/s over the last check interval; -1 = not measured yet
   int restarts = 0;  // how many times this byte range has been moved to a new connection
+  int retries = 0;   // consecutive failed attempts at this range without progress
 
   std::uint64_t received() const { return written + buffer.size(); }
   std::optional<std::uint64_t> length() const {
@@ -211,13 +213,22 @@ private:
   Result<void> flush(Connection &c);
   Result<std::unique_ptr<Connection>>
   make_connection(std::uint64_t start, std::optional<std::uint64_t> end, bool ranged);
-  Result<void> launch(std::uint64_t start, std::uint64_t end, int restarts);
+  Result<void> launch(std::uint64_t start, std::optional<std::uint64_t> end, bool ranged,
+                      int restarts, int retries);
+  Outcome handle_failure(Connection &c);
+  Error failure_of(Connection &c) const;
+  bool retryable(const Error &error) const;
+  bool server_wants_fewer_connections(const Error &error, const Connection &c) const;
+  std::chrono::milliseconds retry_delay(const Connection *c, int retries);
+  Result<void> launch_due_retries(Clock::time_point now);
+  std::size_t active_connections() const;
+  bool wait_or_stop(std::chrono::milliseconds delay);
+  Result<net::ProbeResult> probe_with_retries();
   Result<void> split_for_idle_connection();
   Result<void> replace_slow_connections(Clock::time_point now);
   Result<void> replace(Connection &c);
   Result<void> release(Connection &c);
   Outcome transfer();
-  void record_failure(Connection &c);
   void keep_partial();
   void report_progress(bool force);
   bool dynamic() const { return ranged_; }
@@ -241,6 +252,20 @@ private:
   std::size_t finished_ = 0;
   int splits_ = 0;
   int restarts_ = 0;
+
+  // A range waiting to be retried (its bytes so far are kept by the failed connection).
+  struct PendingRetry {
+    std::uint64_t start = 0;
+    std::optional<std::uint64_t> end;
+    bool ranged = true;
+    int restarts = 0;
+    int retries = 0;
+    Clock::time_point not_before{};
+  };
+  std::vector<PendingRetry> pending_;
+  std::size_t max_active_ = 1; // connection limit; lowered when the server pushes back
+  int retries_ = 0;
+  std::minstd_rand rng_{std::random_device{}()};
   double reference_speed_ = 0; // median connection speed while several were measured
   Clock::time_point last_speed_check_{};
 
@@ -543,14 +568,19 @@ Result<resume::ResumeState> Downloader::snapshot() {
       return make_error(ok.error());
     }
   }
-  std::vector<const Connection *> parts;
+  // Every byte range: live/finished connections plus ranges waiting for a retry, so the saved map
+  // still tiles the file while a retry is pending.
+  std::vector<resume::SavedSegment> parts;
   for (const auto &c : connections_) {
     if (!c->empty) {
-      parts.push_back(c.get());
+      parts.push_back({c->start, *c->end, c->written});
     }
   }
+  for (const auto &p : pending_) {
+    parts.push_back({p.start, *p.end, 0});
+  }
   std::sort(parts.begin(), parts.end(),
-            [](const Connection *a, const Connection *b) { return a->start < b->start; });
+            [](const auto &a, const auto &b) { return a.start < b.start; });
   resume::ResumeState state;
   state.url = net::strip_credentials(options_.request.url);
   state.final_url = net::strip_credentials(info_->final_url);
@@ -558,8 +588,7 @@ Result<resume::ResumeState> Downloader::snapshot() {
   state.size = *info_->size;
   state.etag = info_->etag;
   state.last_modified = info_->last_modified;
-  for (const Connection *c : parts) {
-    resume::SavedSegment s{c->start, *c->end, c->written};
+  for (const resume::SavedSegment &s : parts) {
     // Merge into a completely written predecessor: keeps the file short after many splits.
     if (!state.segments.empty() && state.segments.back().done == state.segments.back().length()) {
       auto &prev = state.segments.back();
@@ -626,17 +655,195 @@ Downloader::make_connection(std::uint64_t start, std::optional<std::uint64_t> en
   return c;
 }
 
-// Starts a ranged connection for [start, end] on the running multi handle. The multi handle's
-// connection pool reuses an idle keep-alive connection to the host when one is available.
-Result<void> Downloader::launch(std::uint64_t start, std::uint64_t end, int restarts) {
-  auto c = make_connection(start, end, true);
+// Starts a connection on the running multi handle. The multi handle's connection pool reuses an
+// idle keep-alive connection to the host when one is available.
+Result<void> Downloader::launch(std::uint64_t start, std::optional<std::uint64_t> end, bool ranged,
+                                int restarts, int retries) {
+  auto c = make_connection(start, end, ranged);
   if (!c) {
     return make_error(c.error());
   }
   (*c)->restarts = restarts;
+  (*c)->retries = retries;
   curl_multi_add_handle(multi_, (*c)->easy.get());
   connections_.push_back(std::move(*c));
   return {};
+}
+
+std::size_t Downloader::active_connections() const {
+  return static_cast<std::size_t>(std::count_if(connections_.begin(), connections_.end(),
+                                                [](const auto &c) { return !c->finished; }));
+}
+
+// What went wrong with a failed connection.
+Error Downloader::failure_of(Connection &c) const {
+  if (c.error) {
+    return *c.error;
+  }
+  if (c.easy && net::is_http(c.easy.get()) && net::response_code(c.easy.get()) >= 400) {
+    return net::http_status_error(net::response_code(c.easy.get()));
+  }
+  return net::transfer_error(c.result, c.storage.error_buffer);
+}
+
+// Transient failures worth another attempt; everything else (404, disk errors, a changed file,
+// a wrong range) fails the download.
+bool Downloader::retryable(const Error &error) const {
+  if (error.code == ErrorCode::Network || error.code == ErrorCode::Timeout) {
+    return true;
+  }
+  if (error.code == ErrorCode::Http) {
+    switch (error.http_status) {
+    case 408: // request timeout
+    case 425: // too early
+    case 429: // too many requests
+    case 500:
+    case 502:
+    case 503:
+    case 504:
+      return true;
+    default:
+      return false;
+    }
+  }
+  return false;
+}
+
+// The server is limiting us: "too many requests", or it refuses/drops new connections while
+// others still work (many servers cap connections per IP).
+bool Downloader::server_wants_fewer_connections(const Error &error, const Connection &c) const {
+  if (error.http_status == 429 || error.http_status == 503) {
+    return true;
+  }
+  const bool others_working = active_connections() > 0;
+  const bool refused = c.result == CURLE_COULDNT_CONNECT || c.result == CURLE_GOT_NOTHING;
+  const bool dropped_at_once =
+      (c.result == CURLE_RECV_ERROR || c.result == CURLE_SEND_ERROR) && c.received() == 0;
+  return others_working && (refused || dropped_at_once);
+}
+
+// Retry-After (seconds) if the server sent one, else exponential backoff with ±25 % jitter.
+std::chrono::milliseconds Downloader::retry_delay(const Connection *c, int retries) {
+  constexpr auto kMaxBackoff = std::chrono::milliseconds(30'000);
+  constexpr auto kMaxRetryAfter = std::chrono::milliseconds(120'000);
+  if (c != nullptr && c->easy) {
+    if (const auto header = net::last_response_header(c->easy.get(), "Retry-After")) {
+      long long seconds = 0;
+      const auto [ptr, ec] =
+          std::from_chars(header->data(), header->data() + header->size(), seconds);
+      if (ec == std::errc{} && seconds >= 0) {
+        return std::min<std::chrono::milliseconds>(std::chrono::seconds(seconds), kMaxRetryAfter);
+      }
+    }
+  }
+  const int doublings = std::min(retries - 1, 16);
+  const auto base =
+      std::min<std::chrono::milliseconds>(options_.retry_delay * (1LL << doublings), kMaxBackoff);
+  std::uniform_real_distribution<double> jitter(0.75, 1.25);
+  return std::chrono::milliseconds(
+      static_cast<long long>(static_cast<double>(base.count()) * jitter(rng_)));
+}
+
+// A connection failed. Retryable: keep its bytes, queue the rest of its range (returns Done so
+// the loop carries on). Otherwise: Failed, or RangeIgnored for the single-connection fallback.
+Downloader::Outcome Downloader::handle_failure(Connection &c) {
+  if (range_ignored_) {
+    return Outcome::RangeIgnored;
+  }
+  Error error = failure_of(c);
+  if (!retryable(error)) {
+    failure_ = error;
+    return Outcome::Failed;
+  }
+  // Progress since the last failure resets the count: only stuck ranges give up.
+  const int retries = c.received() > 0 ? 1 : c.retries + 1;
+  if (retries > options_.max_retries) {
+    error.message += " (gave up after " + std::to_string(options_.max_retries) + " retries)";
+    failure_ = error;
+    return Outcome::Failed;
+  }
+  if (server_wants_fewer_connections(error, c)) {
+    max_active_ = std::max<std::size_t>(1, std::min(max_active_, active_connections()));
+  }
+  const auto delay = retry_delay(&c, retries);
+  ++retries_;
+
+  if (auto ok = flush(c); !ok) {
+    failure_ = ok.error();
+    return Outcome::Failed;
+  }
+  PendingRetry retry;
+  retry.restarts = c.restarts;
+  retry.retries = retries;
+  retry.not_before = Clock::now() + delay;
+  if (c.ranged) {
+    const std::uint64_t position = c.start + c.written;
+    const std::uint64_t old_end = *c.end;
+    if (position > old_end) {
+      (void)release(c);
+      return Outcome::Done; // every byte arrived before the error
+    }
+    if (c.written == 0) {
+      c.empty = true;
+    } else {
+      c.end = position - 1;
+    }
+    retry.start = position;
+    retry.end = old_end;
+  } else {
+    // A whole-file transfer cannot continue mid-file: start it again from the beginning.
+    received_ -= c.received();
+    c.written = 0;
+    c.buffer.clear();
+    c.empty = true;
+    retry.ranged = false;
+  }
+  (void)release(c);
+  pending_.push_back(retry);
+  return Outcome::Done;
+}
+
+// Starts queued retries whose delay has passed, while the connection limit allows.
+Result<void> Downloader::launch_due_retries(Clock::time_point now) {
+  std::sort(pending_.begin(), pending_.end(), [](const PendingRetry &a, const PendingRetry &b) {
+    return a.not_before < b.not_before;
+  });
+  while (!pending_.empty() && pending_.front().not_before <= now &&
+         active_connections() < max_active_) {
+    const PendingRetry retry = pending_.front();
+    pending_.erase(pending_.begin());
+    if (auto ok = launch(retry.start, retry.end, retry.ranged, retry.restarts, retry.retries);
+        !ok) {
+      return ok;
+    }
+  }
+  return {};
+}
+
+// Sleeps up to `delay`; false if a stop was requested meanwhile.
+bool Downloader::wait_or_stop(std::chrono::milliseconds delay) {
+  const auto until = Clock::now() + delay;
+  while (Clock::now() < until) {
+    if (stop_.stop_requested()) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::min<Clock::duration>(until - Clock::now(), kPollTimeout * 5));
+  }
+  return !stop_.stop_requested();
+}
+
+// The probe, retried like a range when the failure is transient (e.g. 503 on the first request).
+Result<net::ProbeResult> Downloader::probe_with_retries() {
+  for (int attempt = 1;; ++attempt) {
+    auto probed = net::probe(options_.request);
+    if (probed || !retryable(probed.error()) || attempt > options_.max_retries) {
+      return probed;
+    }
+    ++retries_;
+    if (!wait_or_stop(retry_delay(nullptr, attempt))) {
+      return make_error(ErrorCode::Cancelled, "download cancelled");
+    }
+  }
 }
 
 // A connection just finished: give it the second half of the largest remaining segment.
@@ -660,7 +867,7 @@ Result<void> Downloader::split_for_idle_connection() {
   const std::uint64_t old_end = *largest->end;
   largest->end = middle - 1; // on_write stops it here
   ++splits_;
-  return launch(middle, old_end, largest->restarts);
+  return launch(middle, old_end, true, largest->restarts, 0);
 }
 
 // Every check interval: measure each connection's speed and restart those far below the median.
@@ -730,7 +937,7 @@ Result<void> Downloader::replace(Connection &c) {
   if (auto ok = release(c); !ok) {
     return ok;
   }
-  return launch(position, old_end, c.restarts + 1);
+  return launch(position, old_end, true, c.restarts + 1, 0);
 }
 
 // A connection that is done for good: write out its bytes, free its buffer and curl handle.
@@ -744,16 +951,6 @@ Result<void> Downloader::release(Connection &c) {
     c.easy.reset(); // a whole-file transfer keeps its handle: run() may read its headers
   }
   return {};
-}
-
-void Downloader::record_failure(Connection &c) {
-  if (c.error) {
-    failure_ = c.error;
-  } else if (net::is_http(c.easy.get()) && net::response_code(c.easy.get()) >= 400) {
-    failure_ = net::http_status_error(net::response_code(c.easy.get()));
-  } else {
-    failure_ = net::transfer_error(c.result, c.storage.error_buffer);
-  }
 }
 
 // Runs every connection to completion (or the first failure / cancel) on one multi handle.
@@ -775,7 +972,7 @@ Downloader::Outcome Downloader::transfer() {
   last_checkpoint_ = Clock::now();
 
   Outcome outcome = Outcome::Done;
-  while (finished_ < connections_.size()) {
+  while (finished_ < connections_.size() || !pending_.empty()) {
     int running = 0;
     const std::uint64_t received_before = received_;
     curl_multi_perform(multi_, &running);
@@ -791,35 +988,56 @@ Downloader::Outcome Downloader::transfer() {
       c->finished = true;
       c->result = msg->data.result;
       ++finished_;
-      const bool ok = c->result == CURLE_OK || (c->result == CURLE_WRITE_ERROR && c->reached_end);
+      bool ok = c->result == CURLE_OK || (c->result == CURLE_WRITE_ERROR && c->reached_end);
+      if (ok && c->ranged && !c->reached_end) {
+        // curl reports success for any complete response: an error status without a body never
+        // reached on_write, and a server may close cleanly before the range is done.
+        if (!c->started) {
+          if (auto checked = on_response(*c); !checked) {
+            c->error = checked.error();
+            ok = false;
+          }
+        }
+        if (ok && c->received() < *c->length()) {
+          c->error =
+              Error{ErrorCode::Network, "connection closed before its range was complete", 0};
+          ok = false;
+        }
+      }
       if (!ok) {
         if (outcome == Outcome::Done) {
-          outcome = range_ignored_ ? Outcome::RangeIgnored : Outcome::Failed;
-          if (outcome == Outcome::Failed) {
-            record_failure(*c);
-          }
+          outcome = handle_failure(*c); // Done again when the range was queued for a retry
         }
-      } else {
-        if (auto released = release(*c); !released && outcome == Outcome::Done) {
-          failure_ = released.error();
+        continue;
+      }
+      if (auto released = release(*c); !released && outcome == Outcome::Done) {
+        failure_ = released.error();
+        outcome = Outcome::Failed;
+      }
+      // A free slot serves a waiting retry before it splits someone else's range.
+      if (dynamic() && options_.split_when_idle && outcome == Outcome::Done && pending_.empty() &&
+          active_connections() < max_active_) {
+        if (auto split = split_for_idle_connection(); !split) {
+          failure_ = split.error();
           outcome = Outcome::Failed;
-        }
-        if (dynamic() && options_.split_when_idle && outcome == Outcome::Done) {
-          if (auto split = split_for_idle_connection(); !split) {
-            failure_ = split.error();
-            outcome = Outcome::Failed;
-          }
         }
       }
     }
     if (outcome != Outcome::Done) {
-      break; // per-segment retries come in step 8
+      break;
     }
     if (stop_.stop_requested()) {
       outcome = Outcome::Cancelled;
       break;
     }
     const auto now = Clock::now();
+    if (!pending_.empty()) {
+      if (auto launched = launch_due_retries(now); !launched) {
+        failure_ = launched.error();
+        outcome = Outcome::Failed;
+        break;
+      }
+    }
     if (dynamic() && options_.replace_slow_connections) {
       if (auto replaced = replace_slow_connections(now); !replaced) {
         failure_ = replaced.error();
@@ -836,7 +1054,7 @@ Downloader::Outcome Downloader::transfer() {
     }
     report_progress(false);
     // While data keeps arriving, go straight back to reading; wait only when a round was idle.
-    if (received_ == received_before && finished_ < connections_.size()) {
+    if (received_ == received_before) {
       curl_multi_poll(multi_, nullptr, 0, static_cast<int>(kPollTimeout.count()), nullptr);
     }
   }
@@ -895,7 +1113,7 @@ Result<DownloadResult> Downloader::run() {
   if (options_.probe) {
     info_ = options_.probe;
   } else if (options_.request.method != "POST") {
-    auto probed = net::probe(options_.request);
+    auto probed = probe_with_retries();
     if (!probed) {
       Error error = probed.error();
       if (!sidecar_path_.empty() && options_.resume) {
@@ -964,6 +1182,7 @@ Result<DownloadResult> Downloader::run() {
     connections_.push_back(std::move(*c));
   }
 
+  max_active_ = static_cast<std::size_t>(std::max(options_.connections, 1));
   meter_.add(received_);
   last_report_ = Clock::now();
   Outcome outcome = transfer();
@@ -974,6 +1193,7 @@ Result<DownloadResult> Downloader::run() {
     stop_checkpoints();
     (void)platform::remove_file(sidecar_path_);
     connections_.clear();
+    pending_.clear();
     received_ = 0;
     resumed_from_ = 0;
     range_ignored_ = false;
@@ -998,9 +1218,10 @@ Result<DownloadResult> Downloader::run() {
         link_expired_or(failure_.value_or(Error{ErrorCode::Network, "download failed", 0})));
   }
 
-  if (!file_.is_open()) { // empty body: no write callback ran
-    connections_.front()->started = false;
-    if (auto ok = on_response(*connections_.front()); !ok) {
+  if (!file_.is_open()) {                    // empty body: no write callback ran
+    Connection &last = *connections_.back(); // earlier ones may be failed attempts
+    last.started = false;
+    if (auto ok = on_response(last); !ok) {
       return make_error(ok.error());
     }
   }
@@ -1041,7 +1262,9 @@ Result<DownloadResult> Downloader::run() {
     info_->size = total;
   }
   report_progress(true);
-  return DownloadResult{final_path_, total, segments, splits_, restarts_, resumed_from_, *info_};
+  return DownloadResult{final_path_, total,         segments, splits_,
+                        restarts_,   resumed_from_, retries_, static_cast<int>(max_active_),
+                        *info_};
 }
 
 } // namespace

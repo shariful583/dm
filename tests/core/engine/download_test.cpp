@@ -240,11 +240,16 @@ TEST_CASE("download errors", "[engine][download]") {
   CHECK(missing.error().http_status == 404);
   CHECK(fs::is_empty(f.dir.path()));
 
-  // The connection drops mid-file (retries come in step 8).
-  const auto dropped = download_file(f.options("/files/data.bin?drop_after=1000000&drop_times=5"));
+  // Every connection keeps dropping: retries run out.
+  auto dropped_options = f.options("/files/data.bin?drop_prob=1");
+  dropped_options.max_retries = 2;
+  dropped_options.retry_delay = std::chrono::milliseconds(10);
+  const auto dropped = download_file(dropped_options);
   REQUIRE_FALSE(dropped);
   CHECK(dropped.error().code == ErrorCode::Network);
+  CHECK(dropped.error().message.find("gave up after 2 retries") != std::string::npos);
   CHECK_FALSE(fs::exists(f.dir.path() / "data.bin"));
+  CHECK(fs::exists(f.dir.path() / "data.bin.part")); // kept for a later resume
 
   // Probe said one size, the file on the server changed before the download started.
   auto changed = f.options("/files/data.bin");
@@ -375,11 +380,13 @@ TEST_CASE("progress lists every segment", "[engine][segments]") {
   CHECK(next == kSize);
 }
 
-TEST_CASE("one failing segment fails the download and keeps the .part", "[engine][segments]") {
+TEST_CASE("one failing segment fails the download when retries are off", "[engine][segments]") {
   Fixture f;
-  const auto result = download_file(f.options("/files/data.bin?drop_after=100000&drop_times=1"));
+  auto options = f.options("/files/data.bin?drop_after=100000&drop_times=1");
+  options.max_retries = 0;
+  const auto result = download_file(options);
   REQUIRE_FALSE(result);
-  CHECK(result.error().code == ErrorCode::Network); // per-segment retries come in step 8
+  CHECK(result.error().code == ErrorCode::Network);
   CHECK(fs::exists(f.dir.path() / "data.bin.part"));
   CHECK_FALSE(fs::exists(f.dir.path() / "data.bin"));
 }

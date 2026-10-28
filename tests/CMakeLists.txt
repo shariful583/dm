@@ -26,6 +26,7 @@ if(WIN32)
     target_sources(lanes_tests PRIVATE
         core/engine/download_test.cpp
         core/engine/resume_test.cpp
+        core/engine/retry_test.cpp
         core/platform/file_test.cpp
         core/platform/process_test.cpp
         core/resume/sidecar_test.cpp)

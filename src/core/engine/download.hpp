@@ -65,6 +65,14 @@ struct DownloadOptions {
   bool restart_if_changed = false;
   std::chrono::milliseconds checkpoint_interval{1000};
 
+  // Retries. A failed range keeps its bytes and is retried on a new connection
+  // after `retry_delay`, doubling each time (±25 %, at most 30 s; a server's Retry-After wins).
+  // A range gives up after `max_retries` consecutive failures without progress. Retried: network
+  // errors, timeouts, early closes, HTTP 408/429/500/502/503/504. 429/503 and refused/dropped
+  // connections lower the connection count to what the server still accepts.
+  int max_retries = 10;
+  std::chrono::milliseconds retry_delay{1000};
+
   // Called on the download thread at most every `progress_interval`, and once at the end.
   std::function<void(const DownloadProgress &)> on_progress;
   std::chrono::milliseconds progress_interval{250};
@@ -77,6 +85,8 @@ struct DownloadResult {
   int splits = 0;                 // segments split for an idle connection
   int restarts = 0;               // slow connections replaced
   std::uint64_t resumed_from = 0; // bytes already on disk from an earlier run
+  int retries = 0;                // failed requests (probe or ranges) that were retried
+  int connection_limit = 0;       // connections allowed at the end (lowered by 429/503 etc.)
   net::ProbeResult info;
 };
 
