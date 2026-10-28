@@ -8,6 +8,7 @@
 #include <optional>
 #include <stop_token>
 #include <string>
+#include <vector>
 
 #include "core/error.hpp"
 #include "core/net/probe.hpp"
@@ -15,10 +16,18 @@
 
 namespace lanes::core::engine {
 
+// One byte range of the file and how much of it has arrived (IDM's connection map).
+struct SegmentProgress {
+  std::uint64_t start = 0;
+  std::optional<std::uint64_t> end; // inclusive; nullopt = until the server stops (unknown size)
+  std::uint64_t received = 0;
+};
+
 struct DownloadProgress {
   std::uint64_t downloaded = 0;
   std::optional<std::uint64_t> total;
   double bytes_per_second = 0;
+  std::vector<SegmentProgress> segments; // one per connection, in file order
 };
 
 struct DownloadOptions {
@@ -29,6 +38,15 @@ struct DownloadOptions {
   // Result of an earlier probe (e.g. from the add dialog); probed here if empty. POST downloads
   // are never probed: the response itself provides size and name.
   std::optional<net::ProbeResult> probe;
+
+  // Parallel connections (1-32), each fetching its own byte range over its own TCP connection.
+  // Used when the server supports ranges and the size is known; otherwise one connection.
+  int connections = 8;
+  // Segments are never made smaller than this, so small files use fewer connections.
+  std::uint64_t min_segment_size = 1 << 20;
+  // Cap on simultaneous connections to one host (CURLMOPT_MAX_HOST_CONNECTIONS).
+  int max_connections_per_host = 16;
+
   // Called on the download thread at most every `progress_interval`, and once at the end.
   std::function<void(const DownloadProgress &)> on_progress;
   std::chrono::milliseconds progress_interval{250};
@@ -37,17 +55,20 @@ struct DownloadOptions {
 struct DownloadResult {
   std::filesystem::path path; // final file
   std::uint64_t size = 0;
+  int connections = 1; // connections actually used
   net::ProbeResult info;
 };
 
 // Downloads into `<path>.part`, then renames it to the final path (replacing an existing file).
-// Blocking: runs the transfer on the calling thread. Request `stop` to cancel; the result is then
-// Cancelled and the .part file is kept for resuming.
+// Blocking: runs every connection on the calling thread (one curl multi event loop). Request
+// `stop` to cancel; the result is then Cancelled and the .part file is kept for resuming.
+//
+// A server that answers a range request with 200 (ignoring the range) is downloaded again over a
+// single connection.
 //
 // Errors: those of net::probe, Http (status in Error::http_status), Network/Timeout, NoSpace and
-// FileTooLarge (checked before writing), Io/AccessDenied for file problems.
-//
-// Single connection for now; segmented downloads arrive in step 5.
+// FileTooLarge (checked before writing), Io/AccessDenied for file problems, InvalidArgument for
+// out-of-range options.
 Result<DownloadResult> download_file(const DownloadOptions &options, std::stop_token stop = {});
 
 } // namespace lanes::core::engine

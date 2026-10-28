@@ -205,10 +205,10 @@ TEST_CASE("volume_info and check_can_store", "[platform][fs]") {
   CHECK(too_big.error().message.find("free") != std::string::npos);
 }
 
-TEST_CASE("file write throughput", "[.][benchmark]") {
+TEST_CASE("file write throughput", "[.][benchmark-disk]") {
   TempDir dir;
   constexpr std::size_t kChunk = 1 << 20;
-  constexpr std::uint64_t kTotal = 1ull << 30;
+  constexpr std::uint64_t kTotal = 256ull << 20; // per variant; keep SSD writes small
   const std::string chunk = make_content(1, 0, kChunk);
   for (const bool sparse : {false, true}) {
     auto file = File::open(dir.path() / (sparse ? "s.bin" : "n.bin"), OpenMode::CreateAlways);
@@ -222,7 +222,7 @@ TEST_CASE("file write throughput", "[.][benchmark]") {
     }
     const double s =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-    WARN((sparse ? "sparse" : "plain") << " write_at 1 GiB: " << kTotal / s / 1e6 << " MB/s");
+    WARN((sparse ? "sparse" : "plain") << " write_at 256 MiB: " << kTotal / s / 1e6 << " MB/s");
   }
 }
 

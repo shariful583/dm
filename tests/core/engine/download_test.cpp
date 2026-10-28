@@ -82,6 +82,7 @@ TEST_CASE("downloads a file intact and renames the .part", "[engine][download]")
   CHECK(sha256_hex(read_file(result->path)) == content_sha256(21, kSize));
   CHECK_FALSE(fs::exists(f.dir.path() / "data.bin.part"));
   CHECK(result->info.accepts_ranges);
+  CHECK(result->connections == 8);
 }
 
 TEST_CASE("uses the server's name, or the caller's sanitized name", "[engine][download]") {
@@ -198,6 +199,7 @@ TEST_CASE("progress events are throttled, monotonic and complete", "[engine][dow
   Fixture f;
   auto options = f.options("/files/data.bin?rate=12582912"); // 12 MiB/s: ~0.75 s
   options.progress_interval = std::chrono::milliseconds(100);
+  options.connections = 1; // one throttled connection: long enough for several events
   std::vector<DownloadProgress> events;
   options.on_progress = [&](const DownloadProgress &p) { events.push_back(p); };
   const auto result = download_file(options);
@@ -255,23 +257,147 @@ TEST_CASE("download errors", "[engine][download]") {
   CHECK(stale.error().message.find("changed on the server") != std::string::npos);
 }
 
-TEST_CASE("single-connection throughput", "[.][benchmark]") {
+TEST_CASE("segments run in parallel over separate connections", "[engine][segments]") {
+  Fixture f;
+  auto options = f.options("/files/data.bin?rate=4194304"); // 4 MiB/s per connection
+  const auto probe = net::probe(options.request);
+  REQUIRE(probe);
+  options.probe = *probe;
+  f.server.reset_stats(); // count only the download's connections
+  const auto result = download_file(options);
+  REQUIRE(result);
+  CHECK(result->connections == 8);
+  CHECK(sha256_hex(read_file(result->path)) == content_sha256(21, kSize));
+  const auto stats = f.server.stats();
+  CHECK(stats.connections == 8);           // one TCP connection per segment
+  CHECK(stats.max_concurrent_bodies == 8); // all at the same time
+  CHECK(stats.body_responses == 8);
+}
+
+TEST_CASE("parallel connections beat one throttled connection", "[engine][segments]") {
   TestServer server;
-  constexpr std::uint64_t kBig = 1024ull * 1024 * 1024;
-  server.add_file("/big.bin", {.size = kBig, .seed = 1});
+  constexpr std::uint64_t kFile = 2 << 20;
+  server.add_file("/f.bin", {.size = kFile, .seed = 8});
   server.start();
   TempDir dir;
-  DownloadOptions options;
-  options.request.url = server.url("/big.bin");
-  if (const std::string external = env_var("LANES_BENCH_URL"); !external.empty()) {
-    options.request.url = external; // e.g. a standalone lanes-testserver.exe
-  }
-  options.directory = dir.path();
-  const auto start = std::chrono::steady_clock::now();
+  const auto timed = [&](int connections) {
+    DownloadOptions o;
+    o.request.url = server.url("/f.bin?rate=2097152"); // 2 MiB/s per connection
+    o.directory = dir.path();
+    o.filename = "f" + std::to_string(connections) + ".bin";
+    o.connections = connections;
+    o.min_segment_size = 256 << 10;
+    const auto start = std::chrono::steady_clock::now();
+    const auto result = download_file(o);
+    REQUIRE(result);
+    CHECK(result->connections == connections);
+    CHECK(sha256_hex(read_file(result->path)) == content_sha256(8, kFile));
+    return std::chrono::steady_clock::now() - start;
+  };
+  const auto one = timed(1);   // ~1 s
+  const auto eight = timed(8); // ~0.13 s
+  CHECK(eight * 3 < one);
+}
+
+TEST_CASE("segment count follows file size and options", "[engine][segments]") {
+  Fixture f;
+  f.server.add_file("/files/three.bin", {.size = (3 << 20) + 5, .seed = 30});
+  const auto three = download_file(f.options("/files/three.bin")); // min segment 1 MiB
+  REQUIRE(three);
+  CHECK(three->connections == 3);
+  CHECK(sha256_hex(read_file(three->path)) == content_sha256(30, (3 << 20) + 5));
+
+  auto many = f.options("/files/data.bin");
+  many.connections = 32;
+  many.min_segment_size = 64 << 10;
+  const auto r32 = download_file(many);
+  REQUIRE(r32);
+  CHECK(r32->connections == 32);
+  CHECK(sha256_hex(read_file(r32->path)) == content_sha256(21, kSize));
+
+  auto zero = f.options("/files/data.bin");
+  zero.connections = 0;
+  CHECK(download_file(zero).error().code == ErrorCode::InvalidArgument);
+  zero.connections = 33;
+  CHECK(download_file(zero).error().code == ErrorCode::InvalidArgument);
+}
+
+TEST_CASE("per-host connection cap queues the extra segments", "[engine][segments]") {
+  Fixture f;
+  auto options = f.options("/files/data.bin?rate=8388608");
+  options.max_connections_per_host = 2;
   const auto result = download_file(options);
-  const double seconds =
-      std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
   REQUIRE(result);
-  WARN("1 GiB over one connection: " << seconds << " s, "
-                                     << static_cast<double>(kBig) / seconds / 1e6 << " MB/s");
+  CHECK(result->connections == 8); // 8 segments, at most 2 transferring at once
+  CHECK(f.server.stats().max_concurrent_bodies <= 2);
+  CHECK(sha256_hex(read_file(result->path)) == content_sha256(21, kSize));
+}
+
+TEST_CASE("a server that ignores ranges falls back to one connection", "[engine][segments]") {
+  Fixture f;
+  auto options = f.options("/files/data.bin");
+  const auto probe = net::probe(options.request); // says ranges work...
+  REQUIRE(probe);
+  REQUIRE(probe->accepts_ranges);
+  options.probe = *probe;
+  options.request.url = f.server.url("/files/data.bin?no_range=1"); // ...but the download gets 200
+  const auto result = download_file(options);
+  REQUIRE(result);
+  CHECK(result->connections == 1);
+  CHECK(sha256_hex(read_file(result->path)) == content_sha256(21, kSize));
+}
+
+TEST_CASE("progress lists every segment", "[engine][segments]") {
+  Fixture f;
+  auto options = f.options("/files/data.bin?rate=8388608");
+  std::vector<DownloadProgress> events;
+  options.progress_interval = std::chrono::milliseconds(50);
+  options.on_progress = [&](const DownloadProgress &p) { events.push_back(p); };
+  REQUIRE(download_file(options));
+  REQUIRE_FALSE(events.empty());
+  const auto &last = events.back();
+  REQUIRE(last.segments.size() == 8);
+  std::uint64_t next = 0;
+  for (const auto &s : last.segments) {
+    CHECK(s.start == next); // contiguous, in file order, covering the file
+    REQUIRE(s.end);
+    CHECK(s.received == *s.end - s.start + 1);
+    next = *s.end + 1;
+  }
+  CHECK(next == kSize);
+}
+
+TEST_CASE("one failing segment fails the download and keeps the .part", "[engine][segments]") {
+  Fixture f;
+  const auto result = download_file(f.options("/files/data.bin?drop_after=100000&drop_times=1"));
+  REQUIRE_FALSE(result);
+  CHECK(result.error().code == ErrorCode::Network); // per-segment retries come in step 8
+  CHECK(fs::exists(f.dir.path() / "data.bin.part"));
+  CHECK_FALSE(fs::exists(f.dir.path() / "data.bin"));
+}
+
+TEST_CASE("download throughput, 1 vs 8 connections", "[.][benchmark-download]") {
+  // 256 MiB per run, written to the temp folder once per connection count.
+  TestServer server;
+  constexpr std::uint64_t kBig = 256ull << 20;
+  server.add_file("/big.bin", {.size = kBig, .seed = 1});
+  server.start();
+  for (const int connections : {1, 8}) {
+    TempDir dir;
+    DownloadOptions options;
+    options.request.url = server.url("/big.bin");
+    if (const std::string external = env_var("LANES_BENCH_URL"); !external.empty()) {
+      options.request.url = external; // e.g. a standalone lanes-testserver.exe
+    }
+    options.directory = dir.path();
+    options.connections = connections;
+    const auto start = std::chrono::steady_clock::now();
+    const auto result = download_file(options);
+    const double seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    REQUIRE(result);
+    WARN(result->size / (1 << 20) << " MiB over " << connections << " connection(s): " << seconds
+                                  << " s, " << static_cast<double>(result->size) / seconds / 1e6
+                                  << " MB/s");
+  }
 }
