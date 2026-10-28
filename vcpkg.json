@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "lanes",
+  "version": "0.1.0",
+  "description": "Lanes Download Manager",
+  "license": "GPL-3.0-or-later",
+  "builtin-baseline": "15b12b99a227d51e21c86dffd40385439eac87a0",
+  "dependencies": [
+    "cli11",
+    "tl-expected",
+    {
+      "name": "catch2",
+      "$comment": "tests only"
+    }
+  ]
+}

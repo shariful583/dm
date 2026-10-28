@@ -1,0 +1,25 @@
+# Build output
+/build/
+/out/
+CMakeUserPresets.json
+
+# vcpkg
+/vcpkg_installed/
+
+# Third-party binaries fetched by tools/ (yt-dlp, JS runtime, ffmpeg)
+/third_party/bin/
+
+# IDEs
+.vs/
+.vscode/
+.idea/
+*.user
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Lanes runtime files created by tests or manual runs
+*.part
+*.lanes.json
+*.lanes.json.tmp
