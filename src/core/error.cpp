@@ -11,6 +11,20 @@ std::string_view to_string(ErrorCode code) noexcept {
     return "invalid_argument";
   case ErrorCode::Io:
     return "io";
+  case ErrorCode::NotFound:
+    return "not_found";
+  case ErrorCode::AccessDenied:
+    return "access_denied";
+  case ErrorCode::AlreadyExists:
+    return "already_exists";
+  case ErrorCode::NoSpace:
+    return "no_space";
+  case ErrorCode::FileTooLarge:
+    return "file_too_large";
+  case ErrorCode::Unsupported:
+    return "unsupported";
+  case ErrorCode::Timeout:
+    return "timeout";
   case ErrorCode::Network:
     return "network";
   case ErrorCode::Http:

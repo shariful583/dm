@@ -5,8 +5,18 @@ find_package(tl-expected CONFIG REQUIRED)
 configure_file(version.hpp.in ${CMAKE_CURRENT_BINARY_DIR}/generated/core/version.hpp @ONLY)
 
 add_library(lanes_core STATIC
-    error.cpp)
+    error.cpp
+    platform/path.cpp)
 add_library(lanes::core ALIAS lanes_core)
+
+# OS-specific code lives only in platform/. POSIX versions come with the Linux port.
+if(WIN32)
+    target_sources(lanes_core PRIVATE
+        platform/file_win.cpp
+        platform/fs_win.cpp
+        platform/process_win.cpp
+        platform/win/win32.cpp)
+endif()
 
 target_include_directories(lanes_core PUBLIC
     ${PROJECT_SOURCE_DIR}/src

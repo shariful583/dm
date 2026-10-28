@@ -15,6 +15,13 @@ enum class ErrorCode {
   Unknown,
   InvalidArgument,
   Io,
+  NotFound,
+  AccessDenied,
+  AlreadyExists,
+  NoSpace,      // not enough free disk space
+  FileTooLarge, // file system limit (e.g. FAT32 4 GiB)
+  Unsupported,
+  Timeout,
   Network,
   Http,
   Cancelled,
@@ -34,6 +41,10 @@ template <typename T> using Result = tl::expected<T, Error>;
 
 inline tl::unexpected<Error> make_error(ErrorCode code, std::string message) {
   return tl::unexpected<Error>(Error{code, std::move(message)});
+}
+
+inline tl::unexpected<Error> make_error(Error error) {
+  return tl::unexpected<Error>(std::move(error));
 }
 
 } // namespace lanes::core
