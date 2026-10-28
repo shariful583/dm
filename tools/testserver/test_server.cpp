@@ -29,6 +29,7 @@ constexpr std::uint64_t kDefaultSlowRate = 64 * 1024;
 constexpr std::time_t kBaseLastModified = 1735689600; // 2025-01-01 00:00:00 UTC
 constexpr std::string_view kSignedPrefix = "/signed";
 constexpr std::string_view kSigningSecret = "lanes-test-secret";
+constexpr const char *kNoAcceptRangesMarker = "X-Lanes-No-Accept-Ranges";
 
 struct Resource {
   FileSpec spec;
@@ -163,9 +164,28 @@ void TestServer::Impl::handle(const httplib::Request &req, httplib::Response &re
     stats.connections = connections.size();
   }
 
+  if (const auto credentials = param(req, "basic_auth")) {
+    if (req.get_header_value("Authorization") !=
+        "Basic " + httplib::detail::base64_encode(*credentials)) {
+      res.set_header("WWW-Authenticate", "Basic realm=\"lanes-test\"");
+      set_text(res, 401, "login required");
+      return;
+    }
+  }
+
   std::string path = req.path;
   if (path == "/redirect") {
     handle_redirect(req, res);
+    return;
+  }
+  if (path == "/echo") {
+    std::string body = "METHOD " + req.method + "\n";
+    for (const auto &[name, value] : req.headers) {
+      body += name + ": " + value + "\n";
+    }
+    body += "BODY " + req.body + "\n";
+    res.status = 200;
+    res.set_content(body, "text/plain");
     return;
   }
   if (path.starts_with(kSignedPrefix) && path.size() > kSignedPrefix.size() &&
@@ -249,8 +269,10 @@ void TestServer::Impl::handle(const httplib::Request &req, httplib::Response &re
   if (!resource.spec.content_disposition.empty()) {
     res.set_header("Content-Disposition", resource.spec.content_disposition);
   }
-  if (!no_range && !chunked) {
+  if (!no_range && !chunked && param_u64(req, "no_accept_ranges", 0) == 0) {
     res.set_header("Accept-Ranges", "bytes");
+  } else {
+    res.set_header(kNoAcceptRangesMarker, "1"); // see the post-routing handler
   }
   if (no_range) {
     res.status = 200; // explicit 200 stops httplib from applying the Range header
@@ -364,13 +386,14 @@ bool TestServer::Impl::stream(BodyPlan &plan, std::size_t offset, std::size_t le
     }
 
     plan.resource.fill(offset, std::span<char>(buffer.data(), n));
+    // Counted before writing, so a client that has received the bytes always sees them in stats.
+    bytes_sent += n;
     if (!sink.write(buffer.data(), n)) {
       return false;
     }
     plan.sent += n;
     offset += n;
     length -= n;
-    bytes_sent += n;
 
     if (plan.rate > 0) {
       const auto due = plan.started + std::chrono::microseconds(plan.sent * 1'000'000 / plan.rate);
@@ -413,6 +436,14 @@ void TestServer::start(int port) {
   };
   srv.Get(R"(/.*)", handler);
   srv.Post(R"(/.*)", handler);
+  // httplib adds "Accept-Ranges: bytes" to every HEAD response; undo that where the handler
+  // asked for no Accept-Ranges header.
+  srv.set_post_routing_handler([](const httplib::Request &, httplib::Response &res) {
+    if (res.has_header(kNoAcceptRangesMarker)) {
+      res.headers.erase(kNoAcceptRangesMarker);
+      res.headers.erase("Accept-Ranges");
+    }
+  });
 
   const int bound = port == 0 ? srv.bind_to_any_port("127.0.0.1")
                               : (srv.bind_to_port("127.0.0.1", port) ? port : -1);

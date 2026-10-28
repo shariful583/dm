@@ -25,7 +25,7 @@ struct FileSpec {
 struct Stats {
   std::uint64_t requests = 0;       // every request, including HEAD and errors
   std::uint64_t body_responses = 0; // responses that started sending a file body
-  std::uint64_t bytes_sent = 0;     // body bytes handed to the socket
+  std::uint64_t bytes_sent = 0;     // body bytes passed (or being passed) to the socket
   std::uint64_t connections = 0;    // distinct client TCP connections (remote address + port)
   int max_concurrent_bodies = 0;    // peak number of bodies being sent at the same time
 };
@@ -39,6 +39,7 @@ struct Stats {
 //
 //   no_range=1             ignore Range, always 200 with the full body, no Accept-Ranges
 //   no_head=1              HEAD answers 405 (forces the GET Range: bytes=0-0 probe fallback)
+//   no_accept_ranges=1     omit Accept-Ranges but still honour Range (common on real servers)
 //   chunked=1              no Content-Length, chunked transfer encoding (unknown size)
 //   rate=N                 throttle each body to N bytes/s
 //   slow_requests=K        the first K bodies use slow_rate (bytes/s, default 64 KiB/s) instead
@@ -50,10 +51,12 @@ struct Stats {
 //   status_times=K         ... for the first K requests (default 1; 0 = always)
 //   retry_after=S          add Retry-After: S to injected 429/503 answers
 //   max_conns=N            more than N bodies in flight at once → 503
+//   basic_auth=U:P         401 + WWW-Authenticate: Basic unless the request has these credentials
 //
 // Special paths:
 //   /redirect?to=<path>&hops=N   302 chain of N hops (default 1) ending at /<path>
 //   /signed/<path>?expires=T&sig=S   valid only before unix time T with sig from signed_url()
+//   /echo                        200 with the request method, headers and body as text
 //
 // Thread safety: all public members may be called from any thread while the server runs.
 class TestServer {

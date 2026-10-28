@@ -205,6 +205,27 @@ TEST_CASE("volume_info and check_can_store", "[platform][fs]") {
   CHECK(too_big.error().message.find("free") != std::string::npos);
 }
 
+TEST_CASE("file write throughput", "[.][benchmark]") {
+  TempDir dir;
+  constexpr std::size_t kChunk = 1 << 20;
+  constexpr std::uint64_t kTotal = 1ull << 30;
+  const std::string chunk = make_content(1, 0, kChunk);
+  for (const bool sparse : {false, true}) {
+    auto file = File::open(dir.path() / (sparse ? "s.bin" : "n.bin"), OpenMode::CreateAlways);
+    REQUIRE(file);
+    if (sparse) {
+      REQUIRE(file->preallocate(kTotal));
+    }
+    const auto start = std::chrono::steady_clock::now();
+    for (std::uint64_t off = 0; off < kTotal; off += kChunk) {
+      REQUIRE(file->write_at(off, chunk));
+    }
+    const double s =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    WARN((sparse ? "sparse" : "plain") << " write_at 1 GiB: " << kTotal / s / 1e6 << " MB/s");
+  }
+}
+
 TEST_CASE("FAT file size limit", "[platform][fs]") {
   CHECK(max_file_size_for_filesystem("FAT32") == 0xFFFFFFFFull);
   CHECK(max_file_size_for_filesystem("fat") == 0xFFFFFFFFull);

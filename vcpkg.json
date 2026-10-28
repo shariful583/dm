@@ -7,6 +7,12 @@
   "builtin-baseline": "15b12b99a227d51e21c86dffd40385439eac87a0",
   "dependencies": [
     "cli11",
+    {
+      "name": "curl",
+      "default-features": false,
+      "features": ["ssl", "idn"],
+      "$comment": "ssl = Schannel (SSPI) on Windows, OpenSSL elsewhere; idn = WinIDN on Windows"
+    },
     "openssl",
     "tl-expected",
     {

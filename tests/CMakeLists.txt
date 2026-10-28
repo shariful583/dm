@@ -6,6 +6,9 @@ include(Catch)
 add_executable(lanes_tests
     core/error_test.cpp
     core/version_test.cpp
+    core/engine/speed_meter_test.cpp
+    core/net/probe_test.cpp
+    core/net/request_test.cpp
     core/platform/path_test.cpp
     testserver/content_test.cpp
     testserver/test_server_test.cpp)
@@ -18,6 +21,7 @@ if(WIN32)
     lanes_set_compiler_options(lanes_test_child)
 
     target_sources(lanes_tests PRIVATE
+        core/engine/download_test.cpp
         core/platform/file_test.cpp
         core/platform/process_test.cpp)
     target_compile_definitions(lanes_tests PRIVATE

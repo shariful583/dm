@@ -34,13 +34,14 @@ std::string_view to_string(ErrorCode code) noexcept;
 struct Error {
   ErrorCode code = ErrorCode::Unknown;
   std::string message;
+  int http_status = 0; // set for ErrorCode::Http
 };
 
 // Return type for fallible core operations (tl::expected in core).
 template <typename T> using Result = tl::expected<T, Error>;
 
 inline tl::unexpected<Error> make_error(ErrorCode code, std::string message) {
-  return tl::unexpected<Error>(Error{code, std::move(message)});
+  return tl::unexpected<Error>(Error{code, std::move(message), 0});
 }
 
 inline tl::unexpected<Error> make_error(Error error) {
