@@ -99,6 +99,33 @@ void request_fields(const json &in, json &out) {
   out["title"] = text(in, "title", kMaxLine);
 }
 
+// Media the page loaded: [{url, mime, size, title, referrer}] (optional; empty list if absent).
+// `referrer` is the player frame's address, which stream servers often check.
+json media_items(const json &in) {
+  json list = json::array();
+  const auto items = in.find("items");
+  if (items == in.end() || items->is_null()) {
+    return list;
+  }
+  if (!items->is_array()) {
+    throw Invalid{"items must be a list"};
+  }
+  if (items->size() > kMaxItems) {
+    throw Invalid{"too many items"};
+  }
+  for (const json &item : *items) {
+    if (!item.is_object()) {
+      throw Invalid{"items must be objects"};
+    }
+    list.push_back({{"url", url(item, "url", true)},
+                    {"mime", text(item, "mime", 256)},
+                    {"size", size(item, "size")},
+                    {"title", text(item, "title", kMaxLine)},
+                    {"referrer", url(item, "referrer", false)}});
+  }
+  return list;
+}
+
 json validate_json(const json &in) {
   if (!in.is_object()) {
     throw Invalid{"message is not a JSON object"};
@@ -133,24 +160,10 @@ json validate_json(const json &in) {
     return out;
   }
   if (type == "capture_media") {
-    const auto items = in.find("items");
-    if (items == in.end() || !items->is_array() || items->empty()) {
+    if (!in.contains("items") || !in["items"].is_array() || in["items"].empty()) {
       throw Invalid{"items must be a non-empty list"};
     }
-    if (items->size() > kMaxItems) {
-      throw Invalid{"too many items"};
-    }
-    json list = json::array();
-    for (const json &item : *items) {
-      if (!item.is_object()) {
-        throw Invalid{"items must be objects"};
-      }
-      list.push_back({{"url", url(item, "url", true)},
-                      {"mime", text(item, "mime", 256)},
-                      {"size", size(item, "size")},
-                      {"title", text(item, "title", kMaxLine)}});
-    }
-    out["items"] = std::move(list);
+    out["items"] = media_items(in);
     request_fields(in, out);
     return out;
   }
@@ -159,6 +172,7 @@ json validate_json(const json &in) {
     if (out["pageUrl"].get_ref<const std::string &>().empty()) {
       throw Invalid{"pageUrl is missing"};
     }
+    out["items"] = media_items(in); // what the page played, in case Lanes cannot read the page
     return out;
   }
   throw Invalid{type.empty() ? std::string("type is missing")

@@ -64,7 +64,7 @@ async function main() {
     const send = document.createElement("button");
     send.textContent = "Download";
     send.addEventListener("click", async () =>
-      result(await ask({ type: "popup_send_media", tabId: tab.id, items: [{ url: m.url, mime: m.mime, size: m.size }] })),
+      result(await ask({ type: "popup_send_media", tabId: tab.id, items: [{ url: m.url, mime: m.mime, size: m.size, referrer: m.referrer }] })),
     );
     li.append(name, meta, send);
     $("media").append(li);
@@ -73,7 +73,7 @@ async function main() {
     result(await ask({
       type: "popup_send_media",
       tabId: tab.id,
-      items: media.map((m) => ({ url: m.url, mime: m.mime, size: m.size })),
+      items: media.map((m) => ({ url: m.url, mime: m.mime, size: m.size, referrer: m.referrer })),
     })),
   );
   $("video").addEventListener("click", async () => {

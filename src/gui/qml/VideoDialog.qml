@@ -11,6 +11,8 @@ ApplicationWindow {
     id: win
     property string pageUrl
     property var initialRequest: ({})
+    // Streams the browser saw this page play (extension): [{url, mime, size, referrer}].
+    readonly property var media: initialRequest.media || []
 
     property var info: null
     property bool loading: true
@@ -143,8 +145,72 @@ ApplicationWindow {
                 wrapMode: Text.Wrap
                 Layout.fillWidth: true
             }
+            // The streams the browser saw the page play (from the extension): often the way when
+            // yt-dlp does not know the site.
             Label {
-                text: qsTr("Video sites change often. Updating the extractor (yt-dlp) usually helps.")
+                visible: win.media.length > 0
+                text: qsTr("The page played these, and Lanes can download them directly:")
+                font.weight: Font.DemiBold
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+                Layout.topMargin: 6
+            }
+            ListView {
+                id: mediaList
+                visible: win.media.length > 0
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(contentHeight, 200)
+                clip: true
+                spacing: 4
+                model: win.media
+                ScrollBar.vertical: ScrollBar {}
+                delegate: RowLayout {
+                    id: item
+                    required property var modelData
+                    width: mediaList.width - 12
+                    spacing: 10
+                    readonly property string name: {
+                        const path = modelData.url.split(/[?#]/)[0]
+                        return decodeURIComponent(path.substring(path.lastIndexOf("/") + 1)) || modelData.url
+                    }
+                    readonly property string kind: {
+                        const u = modelData.url.split(/[?#]/)[0].toLowerCase()
+                        const m = (modelData.mime || "").toLowerCase()
+                        if (u.endsWith(".m3u8") || m.indexOf("mpegurl") >= 0) return "HLS"
+                        if (u.endsWith(".mpd") || m.indexOf("dash") >= 0) return "DASH"
+                        return m.startsWith("audio/") ? qsTr("Audio") : qsTr("Video")
+                    }
+                    Label { text: item.kind; color: palette.placeholderText; Layout.preferredWidth: 44 }
+                    Label {
+                        text: item.name
+                        elide: Text.ElideMiddle
+                        Layout.fillWidth: true
+                        ToolTip.visible: hoverArea.containsMouse
+                        ToolTip.text: item.modelData.url
+                        MouseArea { id: hoverArea; anchors.fill: parent; hoverEnabled: true }
+                    }
+                    Label {
+                        text: item.modelData.size > 0 ? App.formatBytes(item.modelData.size) : ""
+                        color: palette.placeholderText
+                    }
+                    Button {
+                        text: qsTr("Download")
+                        highlighted: true
+                        onClicked: {
+                            App.requestAdd([item.modelData.url], {
+                                referer: item.modelData.referrer || win.initialRequest.referer || "",
+                                cookies: win.initialRequest.cookies || "",
+                                userAgent: win.initialRequest.userAgent || "",
+                            })
+                            win.close()
+                        }
+                    }
+                }
+            }
+            Label {
+                text: win.media.length > 0
+                      ? qsTr("Or, if this is a video site: updating the extractor (yt-dlp) may help.")
+                      : qsTr("Video sites change often; updating the extractor (yt-dlp) usually helps. On other sites, start playing the video first, then click “Download with Lanes” again: the browser then sees the stream.")
                 wrapMode: Text.Wrap
                 color: palette.placeholderText
                 Layout.fillWidth: true

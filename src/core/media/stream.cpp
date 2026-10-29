@@ -234,6 +234,35 @@ Result<Plan> plan(const net::RequestOptions &request, std::optional<int> max_hei
   return p;
 }
 
+// Players often serve playlists under another name or type (".txt", text/plain,
+// application/octet-stream): small responses of such types are read to see what they are.
+bool disguised_stream(const net::RequestOptions &request, const net::ProbeResult &probe) {
+  constexpr std::uint64_t kMaxPlaylist = 4u << 20;
+  if (probe.size && *probe.size > kMaxPlaylist) {
+    return false;
+  }
+  const std::string type = lower(probe.content_type.substr(0, probe.content_type.find(';')));
+  if (!type.empty() && !type.starts_with("text/") && type != "application/octet-stream" &&
+      type != "binary/octet-stream" && type != "application/json" && type != "application/xml") {
+    return false;
+  }
+  net::RequestOptions get = request;
+  get.method = "GET";
+  get.body.reset();
+  get.url = probe.final_url.empty() ? request.url : probe.final_url;
+  // Only the beginning is needed. Binary types may be real files of a few MiB: ask for 4 KiB and
+  // give up after 64 KiB if the server sends everything. Text is a playlist or small anyway.
+  const bool text = type.starts_with("text/");
+  get.headers.emplace_back("Range", "bytes=0-4095");
+  auto fetched = fetch_small(get, text ? kMaxPlaylist : 64u << 10);
+  if (!fetched) {
+    return false; // includes "too large": not a playlist
+  }
+  const std::string_view head = std::string_view(fetched->body).substr(0, 2048);
+  return head.find("#EXTM3U") != std::string_view::npos ||
+         head.find("<MPD") != std::string_view::npos;
+}
+
 void apply_saved_login(engine::DownloadOptions &options) {
   if (options.use_saved_logins && !options.request.auth) {
     if (auto login = platform::find_login(net::host_of(options.request.url)); login && *login) {
@@ -355,7 +384,8 @@ Result<engine::DownloadResult> download_any(engine::DownloadOptions options, std
   }
   apply_saved_login(options);
   if (auto probed = net::probe(options.request)) {
-    if (looks_like_stream(probed->final_url, probed->content_type)) {
+    if (looks_like_stream(probed->final_url, probed->content_type) ||
+        disguised_stream(options.request, *probed)) {
       return download_stream(options, stop);
     }
     options.probe = std::move(*probed); // reused: no second probe

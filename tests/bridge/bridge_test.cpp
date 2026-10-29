@@ -90,8 +90,21 @@ TEST_CASE("browser messages are validated and rebuilt from known fields", "[brid
                             {"pageUrl", "https://example.com/watch"}});
   CHECK(media["items"].size() == 1);
   CHECK(valid({{"type", "ping"}})["type"] == "ping");
-  CHECK(valid({{"type", "video_page"}, {"pageUrl", "https://example.com/v"}})["type"] ==
-        "video_page");
+  CHECK(valid({{"type", "video_page"}, {"pageUrl", "https://example.com/v"}})["items"].empty());
+  // The page's media go along, with the player frame as referrer.
+  const json page = valid({{"type", "video_page"},
+                           {"pageUrl", "https://example.com/v"},
+                           {"items",
+                            {{{"url", "https://cdn.example.net/hls/master.m3u8"},
+                              {"referrer", "https://player.example.org/"}}}}});
+  REQUIRE(page["items"].size() == 1);
+  CHECK(page["items"][0]["referrer"] == "https://player.example.org/");
+  CHECK_FALSE(invalid({{"type", "video_page"},
+                       {"pageUrl", "https://example.com/v"},
+                       {"items",
+                        {{{"url", "https://cdn.example.net/a.m3u8"},
+                          {"referrer", "javascript:alert(1)"}}}}})
+                  .empty());
 
   CHECK(
       invalid({{"type", "capture_download"}, {"url", "file:///C:/Windows/win.ini"}}).find("url") !=

@@ -712,6 +712,8 @@ QString AppController::handleBrowserMessage(const QString &message) {
     if (!core::extract::find_ytdlp()) { // the extension then sends the media it saw instead
       return answer("rejected", tr("yt-dlp is missing, so Lanes cannot read video pages."));
     }
+    // What the page played: offered by the quality window if yt-dlp cannot read the page.
+    request["media"] = m.value("items").toArray().toVariantList();
     emit videoPageRequested(m.value("pageUrl").toString(), request); // the quality window
     return answer("accepted");
   }
@@ -755,6 +757,12 @@ QString AppController::handleBrowserMessage(const QString &message) {
     QStringList urls;
     for (const QJsonValue &item : m.value("items").toArray()) {
       urls << item.toObject().value("url").toString();
+    }
+    // Stream servers check the player's address (often an embedded frame), not the page's.
+    if (const QString player =
+            m.value("items").toArray().first().toObject().value("referrer").toString();
+        !player.isEmpty()) {
+      request["referer"] = player;
     }
     emit addUrlsRequested(urls, request);
     return answer("accepted");

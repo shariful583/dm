@@ -139,6 +139,14 @@ TEST_CASE("every window loads without QML warnings", "[gui]") {
     QMetaObject::invokeMethod(root, "devShow",
                               Q_ARG(QVariant, "progress:" + added.value("id").toString()));
     f.wait([] { return false; }, 600ms);
+    // The video window when yt-dlp fails (the fake always does here) and the page played streams.
+    f.app->requestVideo(
+        "https://example.invalid/watch/1",
+        {{"media", QVariantList{QVariantMap{{"url", "https://cdn.example.invalid/hls/master.m3u8"},
+                                            {"mime", "application/vnd.apple.mpegurl"},
+                                            {"size", -1},
+                                            {"referrer", "https://player.example.invalid/"}}}}});
+    f.wait([] { return false; }, 800ms);
   }
   std::lock_guard lock(g_messages_mutex);
   INFO(g_messages.join("\n").toStdString());
@@ -175,11 +183,21 @@ TEST_CASE("browser messages open the Add window or continue an expired download"
                    });
   CHECK(browser(*f.app, {{"type", "ping"}})["result"] == "accepted");
   QString video_page;
+  QVariantList page_media;
   QObject::connect(f.app.get(), &gui::AppController::videoPageRequested,
-                   [&](const QString &url, const QVariantMap &) { video_page = url; });
-  CHECK(browser(*f.app, {{"type", "video_page"}, {"pageUrl", "https://e.com/v"}})["result"] ==
+                   [&](const QString &url, const QVariantMap &request) {
+                     video_page = url;
+                     page_media = request.value("media").toList();
+                   });
+  CHECK(browser(*f.app, {{"type", "video_page"},
+                         {"pageUrl", "https://e.com/v"},
+                         {"items", QJsonArray{QJsonObject{
+                                       {"url", "https://cdn.e.com/master.m3u8"},
+                                       {"referrer", "https://player.e.com/"}}}}})["result"] ==
         "accepted"); // the quality window opens
   CHECK(video_page == "https://e.com/v");
+  REQUIRE(page_media.size() == 1); // offered there if yt-dlp cannot read the page
+  CHECK(page_media[0].toMap().value("referrer") == "https://player.e.com/");
 
   const QString url = QString::fromStdString(f.server.url("/a.bin"));
   REQUIRE(browser(*f.app, {{"type", "capture_download"},

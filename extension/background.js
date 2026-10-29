@@ -120,7 +120,12 @@ chrome.webRequest.onHeadersReceived.addListener(
     const kind = rules.mediaKind(d.url, header("content-type"), Number.isFinite(length) ? length : -1);
     if (!kind) return;
     mediaOf(d.tabId).then((list) =>
-      setMedia(d.tabId, rules.addMedia(list, { url: d.url, kind, mime: header("content-type"), size: length })),
+      setMedia(d.tabId, rules.addMedia(list, {
+        url: d.url, kind, mime: header("content-type"), size: length,
+        // The frame that asked for it (players are often embedded from another site): stream
+        // servers check this, so Lanes sends it as the referrer.
+        referrer: d.initiator && d.initiator !== "null" ? d.initiator + "/" : undefined,
+      })),
     );
   },
   { urls: ["<all_urls>"], types: ["media", "xmlhttprequest", "other"] },
@@ -134,8 +139,9 @@ chrome.tabs.onRemoved.addListener((tabId) => chrome.storage.session.remove(media
 
 // --- sending pages and media ---
 
-// The video on a page: Lanes first tries the page itself (video sites); if it cannot, the media
-// the page loaded (or the clicked video's own address) is sent instead.
+// The video on a page: Lanes tries the page itself (video sites, through yt-dlp) and gets the
+// media the page loaded along with it, which its video window offers when the page cannot be
+// read. If Lanes takes no pages at all, the media are sent directly.
 async function downloadVideo(tab, srcUrl) {
   const common = {
     pageUrl: tab.url,
@@ -144,12 +150,14 @@ async function downloadVideo(tab, srcUrl) {
     userAgent: navigator.userAgent,
     cookies: await cookiesFor(tab.url),
   };
-  const page = await send({ type: "video_page", ...common });
-  if (page.result === "accepted") return page;
-  let items = (await mediaOf(tab.id)).map((m) => ({ url: m.url, mime: m.mime, size: m.size }));
+  let items = (await mediaOf(tab.id)).map((m) => ({
+    url: m.url, mime: m.mime, size: m.size, referrer: m.referrer,
+  }));
   if (srcUrl && rules.isDownloadableUrl(srcUrl) && !items.some((m) => m.url === srcUrl)) {
     items = [{ url: srcUrl }, ...items];
   }
+  const page = await send({ type: "video_page", ...common, items });
+  if (page.result === "accepted") return page;
   if (items.length === 0) return page; // nothing to send: show why the page did not work
   return send({ type: "capture_media", items, ...common });
 }

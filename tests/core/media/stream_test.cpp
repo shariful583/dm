@@ -348,3 +348,25 @@ TEST_CASE("lanes info lists a stream's qualities", "[media][stream][cli]") {
   CHECK(r->out.find("640x360") != std::string::npos);
   CHECK(r->out.find("320x180") != std::string::npos);
 }
+
+TEST_CASE("a playlist served under another name or type is still a stream", "[media][stream]") {
+  REQUIRE_FIXTURES("hls_ts");
+  Served s;
+  // Players often hand out the playlist as text/plain with a .txt name.
+  const auto playlist = platform::read_small_file(Fixtures::get().root() / "hls_ts" / "index.m3u8");
+  REQUIRE(playlist);
+  s.server.add_static("/media/hls_ts/stream.txt", *playlist, "text/plain");
+  s.server.add_static("/media/hls_ts/notes.txt", "just some notes\n", "text/plain");
+  auto o = s.options("/media/hls_ts/stream.txt");
+  o.filename = "disguised.mp4";
+  const auto result = media::download_any(o);
+  INFO((result ? std::string() : result.error().message));
+  REQUIRE(result);
+  check_av(result->path);
+
+  auto text = s.options("/media/hls_ts/notes.txt"); // a real text file stays one
+  const auto notes = media::download_any(text);
+  REQUIRE(notes);
+  CHECK(notes->path.filename() == "notes.txt");
+  CHECK(*platform::read_small_file(notes->path) == "just some notes\n");
+}
