@@ -14,6 +14,7 @@ components. Every dependency must be GPLv3-compatible and listed here before it 
 | SQLite | Downloads, queues, settings database | Public domain | https://sqlite.org |
 | pugixml | DASH manifests (XML) | MIT | https://pugixml.org |
 | FFmpeg | Joining stream segments into MP4 (bundled ffmpeg.exe, LGPL build, fetched by tools/fetch-third-party.ps1) | LGPL-2.1-or-later | https://ffmpeg.org |
+| Qt 6 (Core, Gui, Qml, Quick, Quick Controls with the FluentWinUI3 style, Quick Dialogs) | GUI, linked dynamically (DLLs shipped next to lanes-gui.exe) | LGPL-3.0 | https://www.qt.io |
 | OpenSSL 3 | Checksums, AES-128 decryption of HLS segments, HMAC (test server) | Apache-2.0 | https://www.openssl.org |
 | Catch2 v3 | Unit tests (not shipped) | BSL-1.0 | https://github.com/catchorg/Catch2 |
 | cpp-httplib | Local test HTTP server (not shipped) | MIT | https://github.com/yhirose/cpp-httplib |
@@ -23,7 +24,6 @@ components. Every dependency must be GPLv3-compatible and listed here before it 
 | Component | Used for | License | Project |
 |---|---|---|---|
 | spdlog | Logging | MIT | https://github.com/gabime/spdlog |
-| Qt 6 | GUI (dynamically linked) | LGPL-3.0 | https://www.qt.io |
 | yt-dlp | Video extraction (bundled binary) | Unlicense | https://github.com/yt-dlp/yt-dlp |
 | Deno | JS runtime for yt-dlp (bundled binary) | MIT | https://deno.com |
 

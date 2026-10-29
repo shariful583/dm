@@ -27,12 +27,17 @@ inline constexpr int kProtocolVersion = 1;
 class EngineService {
 public:
   EngineService(Engine &engine, std::function<void()> request_shutdown);
+  // The GUI, which owns the engine, shows its window on "activate" (a second launch forwards its
+  // command-line arguments, e.g. URLs). Without a handler "activate" answers Unsupported.
+  // Set before serving.
+  void set_on_activate(std::function<void(std::vector<std::string> args)> handler);
   // Never throws; malformed requests get an error response.
   std::string handle(std::string_view request);
 
 private:
   Engine &engine_;
   std::function<void()> request_shutdown_;
+  std::function<void(std::vector<std::string>)> on_activate_;
 };
 
 // Serves `service` until `stop`, one thread per connected client; calls `on_request` for each
@@ -73,6 +78,9 @@ public:
   Result<std::vector<category::Category>> categories();
   Result<void> set_categories(const std::vector<category::Category> &categories);
   Result<void> shutdown_engine();
+  // Asks the GUI owning the engine to show its window and handle `args`. Unsupported when the
+  // owner is the windowless `lanes engine`.
+  Result<void> activate(const std::vector<std::string> &args);
 
   // Raw request/response (JSON text), for tools and tests.
   Result<std::string> call(const std::string &request);

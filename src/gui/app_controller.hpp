@@ -1,0 +1,131 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#pragma once
+
+#include <QObject>
+#include <QSettings>
+#include <QThreadPool>
+#include <QVariantList>
+#include <QVariantMap>
+#include <QtQml/qqmlregistration.h>
+
+#include "core/engine/engine.hpp"
+#include "gui/download_model.hpp"
+
+class QQmlEngine;
+class QJSEngine;
+
+namespace lanes::gui {
+
+// What QML calls: the engine's actions, settings, queues, categories and site logins, plus the
+// requests that open windows (tray, second launch, notifications). Methods that can fail return
+// an error message, "" on success. GUI thread only; probes run on a worker pool.
+//
+// GUI-only preferences live in QSettings (HKCU\Software\Lanes\Lanes) under "gui/":
+// gui/minimizeToTray, gui/showProgress, gui/showComplete, gui/notify (all default true).
+class AppController : public QObject {
+  Q_OBJECT
+  QML_NAMED_ELEMENT(App)
+  QML_SINGLETON
+  Q_PROPERTY(DownloadModel *model READ model CONSTANT)
+  Q_PROPERTY(DownloadFilterModel *downloads READ downloads CONSTANT)
+  // [{name, extensions: "mp4, mkv", folder}]
+  Q_PROPERTY(QVariantList categories READ categories NOTIFY categoriesChanged)
+  // [{name, maxActive, enabled, startTime: "07:00" or "", stopTime, days: bit 0 = Monday}]
+  Q_PROPERTY(QVariantList queues READ queues NOTIFY queuesChanged)
+  // Engine settings (download_dir, connections, ...) and the gui/ preferences.
+  Q_PROPERTY(QVariantMap settings READ settings NOTIFY settingsChanged)
+  Q_PROPERTY(QString version READ version CONSTANT)
+  Q_PROPERTY(QString iconFont READ iconFont CONSTANT) // Segoe Fluent Icons or MDL2 Assets
+
+public:
+  explicit AppController(core::Engine &engine, QObject *parent = nullptr);
+  ~AppController() override;
+
+  // The QML singleton is the instance made in main() (or by a test).
+  static void setInstance(AppController *instance);
+  static AppController *create(QQmlEngine *, QJSEngine *);
+
+  DownloadModel *model() { return &model_; }
+  DownloadFilterModel *downloads() { return &filter_; }
+  QVariantList categories() const;
+  QVariantList queues() const;
+  QVariantMap settings() const;
+  QString version() const;
+  QString iconFont() const;
+
+  // --- downloads ---
+  // Checks `url` in the background; probeFinished(url, {ok, error, fileName, size (-1 unknown),
+  // resumable, type, finalUrl, category, folder}). `request`: referer, cookies, userAgent,
+  // username, password, headers ("Name: value" lines).
+  Q_INVOKABLE void probe(const QString &url, const QVariantMap &request);
+  // `download`: url, request fields as for probe, fileName, folder, queue ("" = start now),
+  // startAt (QDateTime), connections, speedLimit (bytes/s), checksum ("sha256:<hex>"),
+  // ifDuplicate ("ask", "rename", "overwrite", "resume"), overwriteFile.
+  // → {ok, id} or {ok: false, error, duplicate (bool)}.
+  Q_INVOKABLE QVariantMap add(const QVariantMap &download);
+  Q_INVOKABLE QString pause(qint64 id);
+  Q_INVOKABLE QString resume(qint64 id, const QString &newUrl = {});
+  Q_INVOKABLE QString remove(qint64 id, bool deleteFiles);
+  Q_INVOKABLE void pauseAll();
+  Q_INVOKABLE void resumeAll();
+  Q_INVOKABLE QString setSpeedLimit(qint64 id, double bytesPerSecond);
+  // Everything about one download, with its connections: {exists, id, fileName, url, state,
+  // size, downloaded, progress, speed, timeLeft, error, folder, filePath, category, queue,
+  // connections, speedLimit, segments: [{start, end, received}], resumable}.
+  Q_INVOKABLE QVariantMap details(qint64 id) const;
+  Q_INVOKABLE void openFile(qint64 id);
+  Q_INVOKABLE void openFolder(qint64 id);
+  Q_INVOKABLE void openPath(const QString &path);
+  Q_INVOKABLE void copyText(const QString &text);
+  Q_INVOKABLE QString clipboardText() const;
+  // URL list (one per line, '#' comments) and batch patterns ("img[001-120].jpg") → {urls, error}.
+  Q_INVOKABLE QVariantMap expandUrls(const QString &text) const;
+  Q_INVOKABLE bool isUrl(const QString &text) const;
+  // Where a file of this name is saved by default, and its category.
+  Q_INVOKABLE QString folderFor(const QString &fileName) const;
+  Q_INVOKABLE QString categoryOf(const QString &fileName) const;
+
+  // --- settings, queues, categories, logins ---
+  Q_INVOKABLE QString setSetting(const QString &key, const QVariant &value);
+  Q_INVOKABLE QString saveQueue(const QVariantMap &queue);
+  Q_INVOKABLE QString startQueue(const QString &name);
+  Q_INVOKABLE QString stopQueue(const QString &name);
+  Q_INVOKABLE QString setCategories(const QVariantList &categories);
+  Q_INVOKABLE QVariantList defaultCategories() const;
+  Q_INVOKABLE QVariantList logins() const; // [{host, username}]
+  Q_INVOKABLE QString saveLogin(const QString &host, const QString &username,
+                                const QString &password);
+  Q_INVOKABLE QString removeLogin(const QString &host);
+
+  // --- formatting (same units as the CLI) ---
+  Q_INVOKABLE QString formatBytes(double bytes) const;
+  Q_INVOKABLE QString formatSpeed(double bytesPerSecond) const;
+  Q_INVOKABLE QString formatDuration(double seconds) const;
+  Q_INVOKABLE double parseSize(const QString &text) const;    // bytes, -1 if invalid
+  Q_INVOKABLE QString licenseText(const QString &name) const; // "LICENSE", "THIRD_PARTY_NOTICES.md"
+
+  // Asks the UI to open windows (tray menu, second launch, notification clicks).
+  Q_INVOKABLE void requestMainWindow() { emit showMainWindow(); }
+  Q_INVOKABLE void requestAdd(const QStringList &urls) { emit addUrlsRequested(urls); }
+  Q_INVOKABLE void requestProgress(qint64 id) { emit progressWindowRequested(id); }
+  Q_INVOKABLE void quit() { emit quitRequested(); }
+
+signals:
+  void probeFinished(const QString &url, const QVariantMap &result);
+  void categoriesChanged();
+  void queuesChanged();
+  void settingsChanged();
+  void showMainWindow();
+  void addUrlsRequested(const QStringList &urls);
+  void progressWindowRequested(qint64 id);
+  void quitRequested();
+
+private:
+  core::Engine &engine_;
+  DownloadModel model_;
+  DownloadFilterModel filter_;
+  QThreadPool pool_; // probes
+  mutable QSettings prefs_;
+};
+
+} // namespace lanes::gui

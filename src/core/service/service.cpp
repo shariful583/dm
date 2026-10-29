@@ -285,6 +285,10 @@ ErrorCode parse_error_code(const std::string &text) {
 EngineService::EngineService(Engine &engine, std::function<void()> request_shutdown)
     : engine_(engine), request_shutdown_(std::move(request_shutdown)) {}
 
+void EngineService::set_on_activate(std::function<void(std::vector<std::string>)> handler) {
+  on_activate_ = std::move(handler);
+}
+
 std::string EngineService::handle(std::string_view request) {
   const json j = json::parse(request, nullptr, false);
   if (j.is_discarded() || !j.is_object()) {
@@ -382,6 +386,19 @@ std::string EngineService::handle(std::string_view request) {
     }
     if (cmd == "set_setting") {
       return respond(engine_.set_setting(str(j, "key"), str(j, "value")));
+    }
+    if (cmd == "activate") {
+      if (!on_activate_) {
+        return failure({ErrorCode::Unsupported, "no Lanes window to show", 0});
+      }
+      std::vector<std::string> args;
+      for (const auto &a : j.value("args", json::array())) {
+        if (args.size() < 64 && a.is_string() && a.get_ref<const std::string &>().size() < 8192) {
+          args.push_back(a.get<std::string>());
+        }
+      }
+      on_activate_(std::move(args));
+      return ok();
     }
     if (cmd == "shutdown") {
       if (request_shutdown_) {
@@ -610,6 +627,10 @@ Result<void> EngineClient::set_setting(const std::string &key, const std::string
 }
 
 Result<void> EngineClient::shutdown_engine() { return exchange_void(*this, {{"cmd", "shutdown"}}); }
+
+Result<void> EngineClient::activate(const std::vector<std::string> &args) {
+  return exchange_void(*this, {{"cmd", "activate"}, {"args", args}});
+}
 
 Result<std::vector<category::Category>> EngineClient::categories() {
   auto r = exchange(*this, {{"cmd", "categories"}});

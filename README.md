@@ -6,8 +6,21 @@ pause/resume, queues, a scheduler, a speed limiter, HLS/DASH streams, video site
 and a Chrome/Edge extension.
 
 **Status:** early development. The download engine (parallel connections, dynamic splitting,
-crash-safe resume, retries, speed limits) and the `lanes` command line work; queues, video sites,
-the GUI and the browser extension are still to come.
+crash-safe resume, retries, speed limits), queues and scheduler, HLS/DASH streams, the `lanes`
+command line and the Windows app work; video sites (yt-dlp) and the browser extension are still
+to come.
+
+## Windows app
+
+`lanes-gui.exe` is the main program: the download list with categories and queues, an Add
+window that checks the link first (name, size, resume support, folder), a progress window with
+the connection map and a live speed graph, queues with start/stop times, a speed-limit menu,
+options, a notification-area icon and taskbar progress. It follows the Windows light/dark theme
+and uses Mica on Windows 11. Paste a link with Ctrl+V or drop it on the window.
+
+While the app runs, `lanes` commands and the browser extension use its engine; a second
+`lanes-gui.exe <url>` hands the link to the running window. `lanes-gui.exe --tray` starts hidden
+in the notification area.
 
 ## Command line
 
@@ -59,6 +72,12 @@ ctest --preset windows-debug
 
 Use `windows-release` for an optimized build. To use your own vcpkg clone, set `VCPKG_ROOT`
 before running the dev-shell script.
+
+The Windows app also needs Qt 6.8 or newer, the MSVC 64-bit kit (from the Qt online installer;
+the free LGPL version is enough). CMake finds a kit under `C:\Qt` by itself; otherwise set
+`CMAKE_PREFIX_PATH` to it. Without Qt, everything except `lanes-gui.exe` still builds. The build
+copies the Qt files next to `lanes-gui.exe`, so `.\build\windows-debug\bin\lanes-gui.exe` runs as
+is.
 
 ## License
 

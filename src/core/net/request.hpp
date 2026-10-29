@@ -36,7 +36,9 @@ struct RequestOptions {
   std::string referer;
   std::string user_agent;          // empty = default_user_agent()
   std::optional<Credentials> auth; // HTTP Basic or Digest, whichever the server asks for
-  ProxyOptions proxy;
+  ProxyOptions proxy;              // explicit proxy; wins over the system proxy
+  // Without an explicit proxy, use the one Windows is set up with (manual, PAC or WPAD).
+  bool use_system_proxy = true;
   bool follow_redirects = true;
   int max_redirects = 10;
   std::chrono::seconds connect_timeout{30};

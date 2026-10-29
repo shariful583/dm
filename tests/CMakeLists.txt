@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 find_package(Catch2 3 CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 include(Catch)
 
 add_executable(lanes_tests
@@ -15,10 +16,11 @@ add_executable(lanes_tests
     core/media/parse_test.cpp
     core/queue/schedule_test.cpp
     core/platform/path_test.cpp
+    core/platform/proxy_test.cpp
     testserver/content_test.cpp
     testserver/test_server_test.cpp)
 target_link_libraries(lanes_tests PRIVATE
-    lanes::core lanes_cli_lib lanes::testserver Catch2::Catch2WithMain)
+    lanes::core lanes_cli_lib lanes::testserver nlohmann_json::nlohmann_json Catch2::Catch2WithMain)
 lanes_set_compiler_options(lanes_tests)
 
 if(WIN32)
@@ -43,6 +45,7 @@ if(WIN32)
         core/platform/ipc_test.cpp
         core/platform/process_test.cpp
         core/resume/sidecar_test.cpp
+        core/service/service_test.cpp
         core/store/store_test.cpp
         core/verify/checksum_test.cpp)
     target_compile_definitions(lanes_tests PRIVATE
@@ -57,3 +60,20 @@ catch_discover_tests(lanes_tests)
 # Smoke test: the CLI starts and reports the project version.
 add_test(NAME cli_version COMMAND lanes_cli --version)
 set_tests_properties(cli_version PROPERTIES PASS_REGULAR_EXPRESSION "${PROJECT_VERSION}")
+
+# GUI models and QML (only when the GUI is built). Needs the Qt DLLs windeployqt puts next to
+# lanes-gui.exe, so it is built after it.
+if(TARGET lanes_gui_lib)
+    add_executable(lanes_gui_tests gui/gui_test.cpp)
+    target_link_libraries(lanes_gui_tests PRIVATE
+        lanes_gui_lib lanes_gui_libplugin lanes::testserver Catch2::Catch2 Qt6::QuickControls2)
+    lanes_set_compiler_options(lanes_gui_tests)
+    add_dependencies(lanes_gui_tests lanes_gui)
+    # Headless runs need the offscreen platform plugin, which windeployqt does not deploy.
+    add_custom_command(TARGET lanes_gui_tests PRE_LINK
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:lanes_gui>/platforms
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>
+                $<TARGET_FILE_DIR:lanes_gui>/platforms
+        VERBATIM)
+    catch_discover_tests(lanes_gui_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()

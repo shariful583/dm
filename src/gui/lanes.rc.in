@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include <winver.h>
+
+// The icon of windows (Qt loads IDI_ICON1), the taskbar, Explorer and the tray (gui/win/shell.cpp).
+IDI_ICON1 ICON "@CMAKE_CURRENT_SOURCE_DIR@/resources/lanes.ico"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Lanes contributors"
+            VALUE "FileDescription", "Lanes Download Manager"
+            VALUE "FileVersion", "@PROJECT_VERSION@"
+            VALUE "InternalName", "lanes-gui"
+            VALUE "LegalCopyright", "GPL-3.0-or-later"
+            VALUE "OriginalFilename", "lanes-gui.exe"
+            VALUE "ProductName", "Lanes Download Manager"
+            VALUE "ProductVersion", "@PROJECT_VERSION@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

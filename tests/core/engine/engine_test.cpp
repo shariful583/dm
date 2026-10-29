@@ -266,3 +266,27 @@ TEST_CASE("stopping a queue sends its downloads back to waiting", "[engine][queu
   std::this_thread::sleep_for(300ms);
   CHECK(f.engine->get(id)->state == DownloadState::Queued); // does not restart by itself
 }
+
+TEST_CASE("a download's own speed limit changes while it runs", "[engine][queue]") {
+  Fixture f;
+  const auto id = *f.engine->add(f.download("/a.bin?rate=1048576")); // 2 MiB at ≤ 1 MiB/s
+  REQUIRE(f.wait_for(id, DownloadState::Running));
+  const auto start = Clock::now();
+  REQUIRE(f.engine->set_speed_limit(id, 256 << 10));
+  CHECK(f.engine->get(id)->speed_limit == (256u << 10));
+  std::this_thread::sleep_for(1s);
+  const auto slowed = f.engine->get(id)->downloaded;
+  CHECK(slowed < (1u << 20) + (512u << 10)); // ≈ 256 KiB/s now (plus what came before)
+  REQUIRE(f.engine->set_speed_limit(id, 0)); // lifted: finishes at the server's pace
+  REQUIRE(f.wait_for(id, DownloadState::Completed));
+  CHECK(Clock::now() - start < 5s);
+  CHECK(f.engine->set_speed_limit(999, 1).error().code == ErrorCode::NotFound);
+}
+
+TEST_CASE("the system proxy setting is validated", "[engine][queue]") {
+  Fixture f;
+  REQUIRE(f.engine->set_setting("system_proxy", "0"));
+  CHECK(f.engine->set_setting("system_proxy", "2").error().code == ErrorCode::InvalidArgument);
+  const auto id = *f.engine->add(f.download("/a.bin")); // direct either way: loopback
+  REQUIRE(f.wait_for(id, DownloadState::Completed));
+}

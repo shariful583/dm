@@ -84,7 +84,8 @@ struct Engine::Impl {
     bool finished = false;
     bool removed = false;
     bool delete_files = false;
-    fs::path final_path; // for delete_files after a removal
+    fs::path final_path;                             // for delete_files after a removal
+    std::shared_ptr<limiter::RateLimiter> own_limit; // this download's cap, changeable live
   };
   struct Live {
     std::uint64_t downloaded = 0;
@@ -258,8 +259,8 @@ struct Engine::Impl {
         std::clamp<std::uint64_t>(r.connections > 0 ? static_cast<std::uint64_t>(r.connections)
                                                     : setting_uint_locked("connections", 8),
                                   1, kMaxConnections));
-    o.speed_limit = r.speed_limit;
-    o.limiters = {global_limit};
+    o.limiters = {global_limit}; // start_locked adds the download's own, changeable bucket
+    o.request.use_system_proxy = setting_uint_locked("system_proxy", 1) != 0;
     if (const auto colon = r.checksum.find(':'); colon != std::string::npos) {
       const auto algorithm = r.checksum.substr(0, colon) == "md5" ? verify::HashAlgorithm::Md5
                                                                   : verify::HashAlgorithm::Sha256;
@@ -291,6 +292,8 @@ struct Engine::Impl {
     emit_locked(EngineEvent::Kind::Changed, id);
 
     auto worker = std::make_unique<Worker>();
+    worker->own_limit = std::make_shared<limiter::RateLimiter>(r.speed_limit);
+    o.limiters.push_back(worker->own_limit);
     worker->thread = std::jthread([this, id, o = std::move(o)](std::stop_token stop) {
       auto result = media::download_any(std::move(o), stop); // files and HLS/DASH streams
       on_finished(id, std::move(result));
@@ -712,6 +715,26 @@ Result<void> Engine::resume(DownloadId id, std::optional<std::string> new_url) {
   return {};
 }
 
+Result<void> Engine::set_speed_limit(DownloadId id, std::uint64_t bytes_per_second) {
+  Impl &d = *impl_;
+  {
+    std::lock_guard lock(d.mutex);
+    const auto it = d.records.find(id);
+    if (it == d.records.end()) {
+      return make_error(ErrorCode::NotFound, "no download #" + std::to_string(id));
+    }
+    auto &r = it->second;
+    r.speed_limit = bytes_per_second;
+    d.persist_locked(r);
+    if (const auto w = d.workers.find(id); w != d.workers.end() && w->second->own_limit) {
+      w->second->own_limit->set_rate(bytes_per_second);
+    }
+    d.emit_locked(EngineEvent::Kind::Changed, id);
+  }
+  d.publish();
+  return {};
+}
+
 Result<void> Engine::remove(DownloadId id, bool delete_files) {
   Impl &d = *impl_;
   fs::path delete_now;
@@ -891,6 +914,7 @@ std::vector<std::pair<std::string, std::string>> Engine::settings() const {
       {"max_active", "4"},
       {"speed_limit", "0"},
       {"category_folders", "1"},
+      {"system_proxy", "1"},
   };
   for (const auto &[key, value] : d.settings) {
     values[key] = value;
@@ -916,15 +940,15 @@ Result<void> Engine::set_setting(const std::string &key, const std::string &valu
     if (value.empty()) {
       return make_error(ErrorCode::InvalidArgument, "download_dir cannot be empty");
     }
-  } else if (key == "category_folders") {
+  } else if (key == "category_folders" || key == "system_proxy") {
     if (!number || *number > 1) {
-      return make_error(ErrorCode::InvalidArgument, "category_folders must be 0 or 1");
+      return make_error(ErrorCode::InvalidArgument, key + " must be 0 or 1");
     }
   } else {
     return make_error(ErrorCode::InvalidArgument,
                       "unknown setting '" + key +
                           "' (known: download_dir, connections, max_active, speed_limit, "
-                          "category_folders)");
+                          "category_folders, system_proxy)");
   }
   Impl &d = *impl_;
   std::lock_guard lock(d.mutex);

@@ -28,6 +28,7 @@ add_library(lanes_core STATIC
     net/probe.cpp
     net/request.cpp
     platform/path.cpp
+    platform/proxy.cpp
     queue/schedule.cpp
     resume/sidecar.cpp
     service/service.cpp
@@ -45,6 +46,7 @@ if(WIN32)
         platform/fs_win.cpp
         platform/ipc_win.cpp
         platform/process_win.cpp
+        platform/proxy_win.cpp
         platform/system_win.cpp
         platform/win/win32.cpp)
 endif()
@@ -61,6 +63,6 @@ target_link_libraries(lanes_core
         pugixml::pugixml
         unofficial::sqlite3::sqlite3)
 if(WIN32)
-    target_link_libraries(lanes_core PRIVATE shell32 ole32 advapi32)
+    target_link_libraries(lanes_core PRIVATE shell32 ole32 advapi32 winhttp)
 endif()
 lanes_set_compiler_options(lanes_core)

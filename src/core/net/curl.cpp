@@ -4,6 +4,8 @@
 #include <cstring>
 #include <mutex>
 
+#include "core/platform/proxy.hpp"
+
 namespace lanes::core::net {
 
 namespace {
@@ -113,6 +115,10 @@ Result<void> apply_request(CURL *easy, const RequestOptions &options, RequestSto
       set(CURLOPT_PROXYUSERNAME, options.proxy.credentials->username.c_str());
       set(CURLOPT_PROXYPASSWORD, options.proxy.credentials->password.c_str());
     }
+  } else if (options.use_system_proxy) {
+    // curl ignores the Windows proxy settings; "" also keeps it from using *_proxy variables.
+    const std::string system = platform::system_proxy_for(options.url);
+    set(CURLOPT_PROXY, system.c_str()); // copied by curl
   }
 
   if (rc != CURLE_OK) {

@@ -83,7 +83,8 @@ struct EngineConfig {
 // Owns the database, the queues and scheduler, the global speed limit, and one worker thread per
 // running download. Settings: download_dir, connections (8), max_active (4, all downloads),
 // speed_limit (0 = none, bytes/s), category_folders (1: downloads without a folder go to their
-// category's folder). File categories are edited with categories() / set_categories().
+// category's folder), system_proxy (1: use the Windows proxy settings when none is given). File
+// categories are edited with categories() / set_categories().
 //
 // Thread safety: every member may be called from any thread. Event callbacks run on engine or
 // download threads, without engine locks held; they must not block for long.
@@ -99,6 +100,9 @@ public:
   // on resume replaces an expired address (IDM's "Refresh download address").
   Result<void> pause(DownloadId id);
   Result<void> resume(DownloadId id, std::optional<std::string> new_url = std::nullopt);
+  // Caps one download (bytes/s, 0 = no own cap; the global limit still applies). Takes effect at
+  // once, also while it runs.
+  Result<void> set_speed_limit(DownloadId id, std::uint64_t bytes_per_second);
   Result<void> remove(DownloadId id, bool delete_files);
   void pause_all();
   void resume_all();
