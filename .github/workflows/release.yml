@@ -48,12 +48,20 @@ jobs:
           key: vcpkg-${{ runner.os }}-windows-release-${{ hashFiles('vcpkg.json') }}
           restore-keys: vcpkg-${{ runner.os }}-windows-release-
 
+      # aqtinstall needs a Python it supports: the runner's newest (3.15) broke it.
+      - name: Set up Python for aqtinstall
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       # Qt under the LGPL through aqtinstall, the same MSVC kit as development.
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.12.0'
           arch: win64_msvc2022_64
+          setup-python: false # the Python above
+          aqtversion: '==3.3.*'
           cache: true
 
       - name: Install Inno Setup
