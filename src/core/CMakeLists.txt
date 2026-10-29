@@ -3,6 +3,7 @@
 find_package(CURL CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
+find_package(pugixml CONFIG REQUIRED)
 find_package(tl-expected CONFIG REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
 
@@ -17,6 +18,12 @@ add_library(lanes_core STATIC
     engine/engine.cpp
     engine/speed_meter.cpp
     limiter/rate_limiter.cpp
+    media/dash.cpp
+    media/fetch.cpp
+    media/ffmpeg.cpp
+    media/hls.cpp
+    media/http.cpp
+    media/stream.cpp
     net/curl.cpp
     net/probe.cpp
     net/request.cpp
@@ -51,6 +58,7 @@ target_link_libraries(lanes_core
         CURL::libcurl
         nlohmann_json::nlohmann_json
         OpenSSL::Crypto
+        pugixml::pugixml
         unofficial::sqlite3::sqlite3)
 if(WIN32)
     target_link_libraries(lanes_core PRIVATE shell32 ole32 advapi32)

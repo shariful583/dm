@@ -41,6 +41,7 @@ struct GetArgs {
   // File already exists: "overwrite" | "rename" | "fail". Empty: overwrite when -o names the
   // file, rename when the name comes from the server.
   std::string if_exists;
+  int max_height = 0; // HLS/DASH: best quality up to this video height; 0 = best
 };
 
 core::Result<core::net::RequestOptions> build_request(const RequestArgs &args);

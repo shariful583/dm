@@ -9,6 +9,7 @@
 #include <thread>
 
 #include "core/limiter/rate_limiter.hpp"
+#include "core/media/stream.hpp"
 #include "core/net/probe.hpp"
 #include "core/platform/fs.hpp"
 #include "core/platform/path.hpp"
@@ -291,7 +292,7 @@ struct Engine::Impl {
 
     auto worker = std::make_unique<Worker>();
     worker->thread = std::jthread([this, id, o = std::move(o)](std::stop_token stop) {
-      auto result = engine::download_file(o, stop);
+      auto result = media::download_any(std::move(o), stop); // files and HLS/DASH streams
       on_finished(id, std::move(result));
     });
     workers[id] = std::move(worker);

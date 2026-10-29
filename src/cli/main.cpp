@@ -56,6 +56,10 @@ int main(int argc, char **argv) {
                    "File already there: overwrite | rename | fail (default: overwrite a file "
                    "named with -o, rename one named by the server)")
       ->check(CLI::IsMember({"overwrite", "rename", "fail"}));
+  get_cmd
+      ->add_option("--max-height", get.max_height,
+                   "Streams (HLS/DASH): best quality up to this height, e.g. 720")
+      ->check(CLI::Range(1, 10000));
 
   cli::RequestArgs info;
   auto *info_cmd = app.add_subcommand("info", "Show what the server says about a download");

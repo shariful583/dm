@@ -12,6 +12,7 @@ add_executable(lanes_tests
     core/net/probe_test.cpp
     core/net/request_test.cpp
     core/organize_test.cpp
+    core/media/parse_test.cpp
     core/queue/schedule_test.cpp
     core/platform/path_test.cpp
     testserver/content_test.cpp
@@ -37,6 +38,7 @@ if(WIN32)
         core/engine/organize_engine_test.cpp
         core/engine/resume_test.cpp
         core/engine/retry_test.cpp
+        core/media/stream_test.cpp
         core/platform/file_test.cpp
         core/platform/ipc_test.cpp
         core/platform/process_test.cpp

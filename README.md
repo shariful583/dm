@@ -14,6 +14,7 @@ the GUI and the browser extension are still to come.
 ```
 lanes get <url> [-o FILE|DIR\] [-c 8] [--limit 2M] [--sha256 HEX] [-H "Name: value"]
                 [--cookie ..] [--referer ..] [-A agent] [--user name:pass] [--proxy url]
+                [--max-height 720]        # HLS (.m3u8) / DASH (.mpd): best quality up to 720p
 lanes info <url>
 
 lanes add <url> [-o DIR\] [--queue NAME] [--at "YYYY-MM-DD HH:MM"]   # background download
@@ -30,6 +31,13 @@ lanes config [key [value]]       # download_dir, connections, max_active, speed_
 `lanes get` downloads in the foreground and shows a live progress line with a connection map
 (`█` done, `▒` partly, `░` not yet). Ctrl+C pauses; running the same command again resumes where
 it stopped. If a link expired, run `lanes get <new-url> -o <same file>` to continue.
+
+HLS (`.m3u8`) and DASH (`.mpd`) links are recognised automatically: Lanes picks the best quality
+(or the best up to `--max-height`), downloads the segments in parallel (AES-128 encrypted HLS
+included), and joins video and audio into one `.mp4` with ffmpeg, without re-encoding.
+`lanes info <url>` lists the qualities a stream offers. Live streams and DRM-protected streams
+(Widevine, PlayReady, FairPlay, SAMPLE-AES) are not supported. Run `tools\fetch-third-party.ps1`
+once to get `ffmpeg.exe`.
 
 `lanes add` hands the download to a background Lanes engine (started automatically, it stops by
 itself when idle). Downloads, queues and settings are kept in `%LOCALAPPDATA%\Lanes\lanes.db`;

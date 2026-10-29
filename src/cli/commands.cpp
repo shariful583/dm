@@ -10,6 +10,7 @@
 
 #include "cli/format.hpp"
 #include "core/engine/download.hpp"
+#include "core/media/stream.hpp"
 #include "core/net/probe.hpp"
 #include "core/platform/console.hpp"
 #include "core/platform/path.hpp"
@@ -149,8 +150,15 @@ int run_get(const GetArgs &args) {
                                                       : core::engine::ExistingFile::Overwrite;
   }
 
+  if (args.max_height > 0) {
+    options.max_video_height = args.max_height;
+  }
   const bool live = !args.quiet && core::platform::stderr_is_terminal();
   std::string shown_name = options.filename;
+  // The real name is known once the server answered (Content-Disposition, stream name, ...).
+  options.on_target = [&shown_name](const fs::path &path) {
+    shown_name = core::platform::path_to_utf8(path.filename());
+  };
   if (live) {
     options.on_progress = [&](const core::engine::DownloadProgress &p) {
       std::cerr << '\r'
@@ -159,21 +167,13 @@ int run_get(const GetArgs &args) {
                 << std::flush;
     };
   }
-  if (shown_name.empty()) {
-    // Probe up front so the progress line can show the name; the engine reuses this probe.
-    if (live && options.request.method == "GET") {
-      if (auto probed = core::net::probe(options.request)) {
-        shown_name = probed->filename;
-        options.probe = std::move(*probed);
-      }
-    }
-  }
 
   std::stop_source stop;
   core::platform::on_console_interrupt([&stop] { stop.request_stop(); });
 
   const auto started = std::chrono::steady_clock::now();
-  auto result = core::engine::download_file(options, stop.get_token());
+  // Files and HLS/DASH streams alike.
+  auto result = core::media::download_any(options, stop.get_token());
   const double seconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
   if (live) {
@@ -220,6 +220,33 @@ int run_info(const RequestArgs &args) {
   if (!info) {
     print_error(info.error());
     return kExitError;
+  }
+  if (core::media::looks_like_stream(info->final_url, info->content_type)) {
+    auto stream = core::media::inspect_stream(*request);
+    if (!stream) {
+      print_error(stream.error());
+      return kExitError;
+    }
+    std::cout << "Stream:        "
+              << (stream->kind == core::media::StreamKind::Hls ? "HLS" : "DASH") << '\n'
+              << "File name:     " << stream->filename << '\n';
+    for (const auto &c : stream->choices) {
+      std::cout << "  " << c.kind;
+      if (c.height > 0) {
+        std::cout << "  " << c.width << "x" << c.height;
+      }
+      if (c.bandwidth > 0) {
+        std::cout << "  " << format_speed(static_cast<double>(c.bandwidth) / 8);
+      }
+      if (!c.codecs.empty()) {
+        std::cout << "  " << c.codecs;
+      }
+      if (!c.language.empty()) {
+        std::cout << "  [" << c.language << "]";
+      }
+      std::cout << '\n';
+    }
+    return kExitOk;
   }
   std::cout << "File name:     " << info->filename << '\n';
   if (info->size) {

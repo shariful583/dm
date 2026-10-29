@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -80,6 +81,9 @@ public:
   void add_file(std::string path, FileSpec spec);
   // Registers static content at `path`.
   void add_static(std::string path, std::string body, std::string content_type);
+  // Registers every file below `folder` (recursively) under `prefix`, e.g. "/media/hls/a.ts".
+  // Content types follow the extension (.m3u8, .mpd, .ts, .m4s, .mp4).
+  void add_directory(const std::string &prefix, const std::filesystem::path &folder);
   // Registers every file of `fixture` under `prefix` (e.g. "/hls").
   void add_hls_fixture(const std::string &prefix, const HlsFixture &fixture);
 

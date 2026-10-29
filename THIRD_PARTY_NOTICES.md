@@ -12,7 +12,9 @@ components. Every dependency must be GPLv3-compatible and listed here before it 
 | tl-expected | `Result` type in core | CC0-1.0 | https://github.com/TartanLlama/expected |
 | nlohmann/json | Resume sidecar files, engine pipe protocol (JSON) | MIT | https://github.com/nlohmann/json |
 | SQLite | Downloads, queues, settings database | Public domain | https://sqlite.org |
-| OpenSSL 3 | Hashing, HMAC, AES-128 (test server now; core later) | Apache-2.0 | https://www.openssl.org |
+| pugixml | DASH manifests (XML) | MIT | https://pugixml.org |
+| FFmpeg | Joining stream segments into MP4 (bundled ffmpeg.exe, LGPL build, fetched by tools/fetch-third-party.ps1) | LGPL-2.1-or-later | https://ffmpeg.org |
+| OpenSSL 3 | Checksums, AES-128 decryption of HLS segments, HMAC (test server) | Apache-2.0 | https://www.openssl.org |
 | Catch2 v3 | Unit tests (not shipped) | BSL-1.0 | https://github.com/catchorg/Catch2 |
 | cpp-httplib | Local test HTTP server (not shipped) | MIT | https://github.com/yhirose/cpp-httplib |
 
@@ -24,7 +26,6 @@ components. Every dependency must be GPLv3-compatible and listed here before it 
 | Qt 6 | GUI (dynamically linked) | LGPL-3.0 | https://www.qt.io |
 | yt-dlp | Video extraction (bundled binary) | Unlicense | https://github.com/yt-dlp/yt-dlp |
 | Deno | JS runtime for yt-dlp (bundled binary) | MIT | https://deno.com |
-| FFmpeg | Muxing (bundled binary) | LGPL-2.1+ / GPL-2.0+ | https://ffmpeg.org |
 
 Full license texts are shipped with the installer and shown in the app under
 About → Open-source licenses.

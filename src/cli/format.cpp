@@ -184,6 +184,10 @@ std::string progress_line(const core::engine::DownloadProgress &p, std::string_v
     stats += "  ETA " + format_duration(p.bytes_per_second > 0 ? left / p.bytes_per_second : -1);
   } else {
     stats = format_bytes(p.downloaded) + "  " + format_speed(p.bytes_per_second);
+    if (p.parts_total > 0) { // a stream: no total size, but a segment count
+      stats = "segments " + std::to_string(p.parts_done) + "/" + std::to_string(p.parts_total) +
+              "  " + stats;
+    }
   }
   if (active > 1) {
     stats += "  " + std::to_string(active) + " conn";

@@ -31,6 +31,9 @@ struct DownloadProgress {
   std::optional<std::uint64_t> total;
   double bytes_per_second = 0;
   std::vector<SegmentProgress> segments; // one per connection, in file order
+  // HLS/DASH streams: media segments fetched / in total (total size is not known in advance).
+  std::size_t parts_done = 0;
+  std::size_t parts_total = 0;
 };
 
 // What to do when the final file already exists (a resumed .part is never a conflict).
@@ -98,6 +101,10 @@ struct DownloadOptions {
   // Verified before the .part file is renamed; a mismatch fails with ChecksumMismatch and keeps
   // the .part file (without a resume sidecar: its content is wrong, a rerun starts over).
   std::optional<verify::Checksum> checksum;
+
+  // HLS/DASH streams (media::download_any): the best quality up to this video height (720,
+  // 1080, ...); nullopt = the best available.
+  std::optional<int> max_video_height;
 
   // Called on the download thread at most every `progress_interval`, and once at the end.
   std::function<void(const DownloadProgress &)> on_progress;

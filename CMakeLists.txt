@@ -24,6 +24,18 @@ option(LANES_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 include(LanesCompilerOptions)
 
+# Third-party programs fetched by tools/fetch-third-party.ps1 go next to the executables, where
+# Lanes looks for them. A hard link: no copy of a 100+ MB file per build folder.
+foreach(program ffmpeg.exe)
+    set(source ${PROJECT_SOURCE_DIR}/third_party/bin/${program})
+    if(EXISTS ${source})
+        file(MAKE_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+        file(CREATE_LINK ${source} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${program} COPY_ON_ERROR)
+    else()
+        message(STATUS "${program} not found: run tools/fetch-third-party.ps1 (stream tests skip)")
+    endif()
+endforeach()
+
 add_subdirectory(src/core)
 add_subdirectory(src/cli)
 

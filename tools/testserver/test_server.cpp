@@ -7,7 +7,9 @@
 #include <charconv>
 #include <cstring>
 #include <ctime>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <random>
@@ -481,6 +483,31 @@ void TestServer::add_static(std::string path, std::string body, std::string cont
   resource.static_body = std::make_shared<const std::string>(std::move(body));
   std::lock_guard lock(impl_->mutex);
   impl_->resources[std::move(path)] = std::move(resource);
+}
+
+void TestServer::add_directory(const std::string &prefix, const std::filesystem::path &folder) {
+  for (const auto &entry : std::filesystem::recursive_directory_iterator(folder)) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    std::ifstream in(entry.path(), std::ios::binary);
+    std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::string relative = std::filesystem::relative(entry.path(), folder).generic_string();
+    const std::string ext = entry.path().extension().string();
+    std::string type = "application/octet-stream";
+    if (ext == ".m3u8") {
+      type = "application/vnd.apple.mpegurl";
+    } else if (ext == ".mpd") {
+      type = "application/dash+xml";
+    } else if (ext == ".ts") {
+      type = "video/mp2t";
+    } else if (ext == ".m4s") {
+      type = "video/iso.segment";
+    } else if (ext == ".mp4") {
+      type = "video/mp4";
+    }
+    add_static(prefix + "/" + relative, std::move(body), type);
+  }
 }
 
 void TestServer::add_hls_fixture(const std::string &prefix, const HlsFixture &fixture) {
