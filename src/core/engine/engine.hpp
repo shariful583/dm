@@ -43,6 +43,9 @@ struct NewDownload {
   DuplicateAction if_duplicate = DuplicateAction::Ask;
   // A file of the same name already on disk: replace it, or (default) save under a free name.
   bool overwrite_file = false;
+  // A video page: extract::VideoRequest as JSON (extract::to_json); empty for a
+  // plain file. The URL is then the page, and yt-dlp finds the video.
+  std::string video;
 };
 
 // Snapshot of one download for front-ends.
@@ -66,6 +69,7 @@ struct DownloadInfo {
   std::int64_t added_at = 0;
   std::optional<std::int64_t> completed_at;
   std::vector<engine::SegmentProgress> segments; // live while running
+  bool video = false;                            // a video page (NewDownload::video)
 };
 
 struct EngineEvent {

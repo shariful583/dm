@@ -9,8 +9,8 @@ namespace lanes::core::store {
 
 namespace {
 
-// 1: initial. 2: downloads.overwrite.
-constexpr int kSchemaVersion = 2;
+// 1: initial. 2: downloads.overwrite. 3: downloads.video.
+constexpr int kSchemaVersion = 3;
 
 constexpr const char *kSchema = R"sql(
 CREATE TABLE IF NOT EXISTS downloads(
@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS downloads(
   error TEXT NOT NULL DEFAULT '',
   added_at INTEGER NOT NULL,
   completed_at INTEGER,
-  overwrite INTEGER NOT NULL DEFAULT 0);
+  overwrite INTEGER NOT NULL DEFAULT 0,
+  video TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS queues(
   name TEXT PRIMARY KEY,
   max_active INTEGER NOT NULL,
@@ -51,7 +52,7 @@ CREATE TABLE IF NOT EXISTS settings(
 constexpr const char *kColumns =
     "url, method, referer, user_agent, headers, proxy, directory, filename, queue, state, "
     "start_now, start_at, size, downloaded, connections, speed_limit, checksum, error, added_at, "
-    "completed_at, overwrite";
+    "completed_at, overwrite, video";
 
 std::string headers_json(const std::vector<std::pair<std::string, std::string>> &headers) {
   nlohmann::json j = nlohmann::json::array();
@@ -78,7 +79,7 @@ std::optional<std::int64_t> to_optional_int(const std::optional<std::uint64_t> &
   return v ? std::optional<std::int64_t>(static_cast<std::int64_t>(*v)) : std::nullopt;
 }
 
-// Binds the record's columns as parameters 1..21, in kColumns order.
+// Binds the record's columns as parameters 1..22, in kColumns order.
 void bind_record(Statement &s, const DownloadRecord &r) {
   s.bind(1, r.url)
       .bind(2, r.method)
@@ -100,7 +101,8 @@ void bind_record(Statement &s, const DownloadRecord &r) {
       .bind(18, r.error)
       .bind(19, r.added_at)
       .bind(20, r.completed_at)
-      .bind(21, std::int64_t{r.overwrite ? 1 : 0});
+      .bind(21, std::int64_t{r.overwrite ? 1 : 0})
+      .bind(22, r.video);
 }
 
 std::optional<queue::TimeOfDay> time_column(const Statement &s, int column) {
@@ -152,6 +154,12 @@ Result<Store> Store::open(const std::filesystem::path &path) {
       return make_error(ok.error());
     }
   }
+  if (version >= 1 && version <= 2) {
+    if (auto ok = db->exec("ALTER TABLE downloads ADD COLUMN video TEXT NOT NULL DEFAULT '';");
+        !ok) {
+      return make_error(ok.error());
+    }
+  }
   if (auto ok = db->exec("PRAGMA user_version=" + std::to_string(kSchemaVersion) + ";"); !ok) {
     return make_error(ok.error());
   }
@@ -163,7 +171,7 @@ Result<Store> Store::open(const std::filesystem::path &path) {
 Result<DownloadId> Store::insert(DownloadRecord record) {
   auto s = db_.prepare(std::string("INSERT INTO downloads(") + kColumns +
                        ") VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,"
-                       "?19,?20,?21)");
+                       "?19,?20,?21,?22)");
   if (!s) {
     return make_error(s.error());
   }
@@ -179,12 +187,12 @@ Result<void> Store::update(const DownloadRecord &r) {
       "UPDATE downloads SET url=?1, method=?2, referer=?3, user_agent=?4, headers=?5, proxy=?6, "
       "directory=?7, filename=?8, queue=?9, state=?10, start_now=?11, start_at=?12, size=?13, "
       "downloaded=?14, connections=?15, speed_limit=?16, checksum=?17, error=?18, added_at=?19, "
-      "completed_at=?20, overwrite=?21 WHERE id=?22");
+      "completed_at=?20, overwrite=?21, video=?22 WHERE id=?23");
   if (!s) {
     return make_error(s.error());
   }
   bind_record(*s, r);
-  s->bind(22, r.id);
+  s->bind(23, r.id);
   return s->run();
 }
 
@@ -236,6 +244,7 @@ Result<std::vector<DownloadRecord>> Store::downloads() {
     r.added_at = s->int64(19);
     r.completed_at = s->optional_int64(20);
     r.overwrite = s->int64(21) != 0;
+    r.video = s->text(22);
     out.push_back(std::move(r));
   }
   return out;

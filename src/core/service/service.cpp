@@ -98,6 +98,7 @@ json to_json(const NewDownload &n) {
       {"proxy_auth", credentials(n.request.proxy.credentials)},
       {"directory", platform::path_to_utf8(n.directory)},
       {"filename", n.filename},
+      {"video", n.video},
       {"queue", n.queue},
       {"start_at", opt(n.start_at)},
       {"connections", n.connections},
@@ -136,6 +137,7 @@ Result<NewDownload> new_download(const json &j) {
   n.request.proxy.credentials = credentials(j, "proxy_auth");
   n.directory = platform::path_from_utf8(str(j, "directory"));
   n.filename = str(j, "filename");
+  n.video = str(j, "video");
   n.queue = str(j, "queue");
   n.start_at = opt_int(j, "start_at");
   n.connections = static_cast<int>(opt_int(j, "connections").value_or(0));
@@ -183,6 +185,7 @@ json to_json(const DownloadInfo &d) {
       {"error", d.error},
       {"connections", d.connections},
       {"speed_limit", d.speed_limit},
+      {"video", d.video},
       {"added_at", d.added_at},
       {"completed_at", opt(d.completed_at)},
       {"segments", segments},
@@ -208,6 +211,7 @@ DownloadInfo download_info(const json &j) {
   d.error = str(j, "error");
   d.connections = j.value("connections", 0);
   d.speed_limit = j.value("speed_limit", std::uint64_t{0});
+  d.video = j.value("video", false);
   d.added_at = opt_int(j, "added_at").value_or(0);
   d.completed_at = opt_int(j, "completed_at");
   if (const auto it = j.find("segments"); it != j.end() && it->is_array()) {

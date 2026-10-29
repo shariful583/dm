@@ -65,6 +65,33 @@ int main(int argc, char **argv) {
   auto *info_cmd = app.add_subcommand("info", "Show what the server says about a download");
   add_request_options(*info_cmd, info);
 
+  cli::VideoArgs video;
+  auto *video_cmd = app.add_subcommand("video", "Download from a video site (yt-dlp)");
+  video_cmd->add_option("url", video.request.url, "Address of the video or playlist page");
+  video_cmd->add_option("--cookie", video.request.cookie,
+                        "The site's cookies \"name=value; ...\" (logged-in videos)");
+  video_cmd->add_option("--referer", video.request.referer, "Referer page");
+  video_cmd->add_option("-A,--user-agent", video.request.user_agent, "User-Agent");
+  video_cmd
+      ->add_option("-f,--format", video.format,
+                   "best | 1080p | 720p | ... | audio | mp3 | format ids (137+140)")
+      ->capture_default_str();
+  video_cmd->add_flag("-l,--list", video.list, "Show the formats (or playlist entries) only");
+  video_cmd->add_option("-o,--output", video.output, "Folder (default: the current one)");
+  video_cmd->add_option("--subs", video.subs, "Subtitle languages, e.g. en,de");
+  video_cmd->add_flag("--thumbnail", video.thumbnail, "Also save the thumbnail");
+  video_cmd->add_flag("--playlist", video.playlist, "The whole playlist, not just this video");
+  video_cmd->add_option("--items", video.items, "Playlist entries, e.g. 1-3,7 (with --playlist)");
+  video_cmd->add_option("-c,--connections", video.connections, "Parallel connections, 1-32")
+      ->capture_default_str()
+      ->check(CLI::Range(1, 32));
+  video_cmd->add_option("--limit", video.limit, "Speed limit, e.g. 2M");
+  video_cmd->add_flag("--add", video.add, "Hand to the background engine instead");
+  video_cmd->add_option("--queue", video.queue, "With --add: wait in this queue");
+  video_cmd->add_flag("-q,--quiet", video.quiet, "No progress or summary output");
+  video_cmd->add_flag("--update", video.update, "Update yt-dlp (sites change often)");
+  video_cmd->add_flag("--rollback", video.rollback, "Go back to the yt-dlp before the last update");
+
   // --- through the background engine ---
   cli::AddArgs add;
   auto *add_cmd = app.add_subcommand("add", "Add a download to the background engine");
@@ -168,6 +195,9 @@ int main(int argc, char **argv) {
   }
   if (info_cmd->parsed()) {
     return cli::run_info(info);
+  }
+  if (video_cmd->parsed()) {
+    return cli::run_video(video);
   }
   if (add_cmd->parsed()) {
     return cli::run_add(add);

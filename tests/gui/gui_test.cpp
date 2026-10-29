@@ -128,7 +128,8 @@ TEST_CASE("every window loads without QML warnings", "[gui]") {
     qml.loadFromModule("Lanes", "Main");
     REQUIRE(qml.rootObjects().size() == 1);
     QObject *root = qml.rootObjects().first();
-    for (const char *what : {"add:https://example.invalid/file.zip", "options", "queues"}) {
+    for (const char *what : {"add:https://example.invalid/file.zip", "options", "queues",
+                             "video:https://example.invalid/watch?v=1"}) {
       QMetaObject::invokeMethod(root, "devShow", Q_ARG(QVariant, QString::fromLatin1(what)));
       f.wait([] { return false; }, 300ms);
     }
@@ -170,8 +171,12 @@ TEST_CASE("browser messages open the Add window or continue an expired download"
                      shown_request = request;
                    });
   CHECK(browser(*f.app, {{"type", "ping"}})["result"] == "accepted");
+  QString video_page;
+  QObject::connect(f.app.get(), &gui::AppController::videoPageRequested,
+                   [&](const QString &url, const QVariantMap &) { video_page = url; });
   CHECK(browser(*f.app, {{"type", "video_page"}, {"pageUrl", "https://e.com/v"}})["result"] ==
-        "rejected");
+        "accepted"); // the quality window opens
+  CHECK(video_page == "https://e.com/v");
 
   const QString url = QString::fromStdString(f.server.url("/a.bin"));
   REQUIRE(browser(*f.app, {{"type", "capture_download"},
@@ -226,6 +231,9 @@ TEST_CASE("sizes and durations are formatted like the CLI", "[gui]") {
 }
 
 int main(int argc, char *argv[]) {
+  // The fake yt-dlp, failing at once: GUI tests never go online.
+  qputenv("LANES_YTDLP", LANES_FAKE_YTDLP_PATH);
+  qputenv("LANES_FAKE_YTDLP_FAIL", "offline in tests");
   if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
   }

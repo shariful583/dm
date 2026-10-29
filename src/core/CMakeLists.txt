@@ -17,6 +17,10 @@ add_library(lanes_core STATIC
     engine/download_state.cpp
     engine/engine.cpp
     engine/speed_meter.cpp
+    extract/info.cpp
+    extract/updater.cpp
+    extract/video.cpp
+    extract/ytdlp.cpp
     limiter/rate_limiter.cpp
     media/dash.cpp
     media/fetch.cpp

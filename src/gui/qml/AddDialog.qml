@@ -214,6 +214,18 @@ ApplicationWindow {
             }
         }
 
+        // A web page rather than a file: maybe a video site.
+        Button {
+            visible: win.single && win.probe !== null && win.probe.ok === true
+                     && (win.probe.type || "").startsWith("text/html")
+            text: qsTr("This is a web page: find its video")
+            highlighted: true
+            onClicked: {
+                App.requestVideo(win.urls[0], win.requestFields())
+                win.close()
+            }
+        }
+
         GridLayout {
             columns: 3
             columnSpacing: 10

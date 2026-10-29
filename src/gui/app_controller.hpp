@@ -102,6 +102,19 @@ public:
                                 const QString &password);
   Q_INVOKABLE QString removeLogin(const QString &host);
 
+  // --- video sites ---
+  // Reads a video page with yt-dlp in the background; videoInfoReady(url, {ok, error, title,
+  // uploader, duration, thumbnail, isPlaylist, entries: [{url, title, duration}], choices:
+  // [{key, label, detail}], subtitles: [language]}). `request`: cookies, userAgent, referer.
+  Q_INVOKABLE void extractVideo(const QString &url, const QVariantMap &request);
+  // Fetches a new yt-dlp now (sites change often); extractorUpdated(ok, message).
+  Q_INVOKABLE void updateExtractor();
+  Q_INVOKABLE void requestVideo(const QString &url, const QVariantMap &request = {}) {
+    emit videoPageRequested(url, request);
+  }
+  // At most daily, in the background: keeps yt-dlp current without asking.
+  void checkExtractorUpdate();
+
   // --- browser extension ---
   // Answers a message the bridge validated (JSON): ping, open, capture_download (opens the Add
   // window with the browser's cookies, referrer, user agent and POST body, or continues a
@@ -138,6 +151,9 @@ signals:
   void showMainWindow();
   void addUrlsRequested(const QStringList &urls, const QVariantMap &request);
   void progressWindowRequested(qint64 id);
+  void videoPageRequested(const QString &url, const QVariantMap &request);
+  void videoInfoReady(const QString &url, const QVariantMap &info);
+  void extractorUpdated(bool ok, const QString &message);
   void quitRequested();
 
 private:

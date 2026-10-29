@@ -1,0 +1,12 @@
+{
+  "_type": "playlist",
+  "id": "PLlanes",
+  "title": "Lanes Test Playlist",
+  "extractor": "youtube:tab",
+  "webpage_url": "https://www.youtube.com/playlist?list=PLlanes",
+  "entries": [
+    {"_type": "url", "id": "a1", "url": "https://www.youtube.com/watch?v=a1", "title": "First", "duration": 61},
+    {"_type": "url", "id": "b2", "url": "https://www.youtube.com/watch?v=b2", "title": "Second", "duration": 62},
+    {"_type": "url", "id": "c3", "url": "https://www.youtube.com/watch?v=c3", "title": "Third"}
+  ]
+}

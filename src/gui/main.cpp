@@ -297,6 +297,9 @@ int main(int argc, char *argv[]) {
     return 1;
   }
   Shell shell(controller, qml);
+  if (args.screenshot.isEmpty()) {
+    controller.checkExtractorUpdate(); // yt-dlp: at most once a day, in the background
+  }
   // exit(), not quit(): quit() first asks the windows to close, and the main window refuses
   // (it hides to the tray instead).
   QObject::connect(&controller, &gui::AppController::quitRequested, &app,

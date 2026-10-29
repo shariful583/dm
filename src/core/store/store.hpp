@@ -40,6 +40,9 @@ struct DownloadRecord {
   std::int64_t added_at = 0;
   std::optional<std::int64_t> completed_at;
   bool overwrite = false; // replace an existing file of the same name (else pick a free name)
+  // A video page: {"format": "1080p", "subtitles": ["en"], "thumbnail": false} as
+  // JSON; empty for an ordinary download.
+  std::string video;
 };
 
 // The Lanes database: downloads, queues, settings. Uses WAL mode and NORMAL sync (few disk

@@ -6,9 +6,9 @@ pause/resume, queues, a scheduler, a speed limiter, HLS/DASH streams, video site
 and a Chrome/Edge extension.
 
 **Status:** early development. The download engine (parallel connections, dynamic splitting,
-crash-safe resume, retries, speed limits), queues and scheduler, HLS/DASH streams, the `lanes`
-command line, the Windows app and the Chrome/Edge extension work; video sites (yt-dlp) are still
-to come.
+crash-safe resume, retries, speed limits), queues and scheduler, HLS/DASH streams, video sites
+(yt-dlp), the `lanes` command line, the Windows app and the Chrome/Edge extension work. Windows
+integration (sleep prevention, shut down when done) and the installer are next.
 
 ## Windows app
 
@@ -48,6 +48,9 @@ lanes get <url> [-o FILE|DIR\] [-c 8] [--limit 2M] [--sha256 HEX] [-H "Name: val
                 [--cookie ..] [--referer ..] [-A agent] [--user name:pass] [--proxy url]
                 [--max-height 720]        # HLS (.m3u8) / DASH (.mpd): best quality up to 720p
 lanes info <url>
+lanes video <page-url> [-f best|1080p|720p|audio|mp3|137+140] [--list] [--subs en,de]
+            [--thumbnail] [--playlist [--items 1-3,7]] [--cookie ..] [--add [--queue NAME]]
+lanes video --update | --rollback                                   # the yt-dlp extractor
 
 lanes add <url> [-o DIR\] [--queue NAME] [--at "YYYY-MM-DD HH:MM"]   # background download
 lanes add --batch urls.txt   |   lanes add --pattern "https://host/img[001-120].jpg"
@@ -69,7 +72,15 @@ HLS (`.m3u8`) and DASH (`.mpd`) links are recognised automatically: Lanes picks 
 included), and joins video and audio into one `.mp4` with ffmpeg, without re-encoding.
 `lanes info <url>` lists the qualities a stream offers. Live streams and DRM-protected streams
 (Widevine, PlayReady, FairPlay, SAMPLE-AES) are not supported. Run `tools\fetch-third-party.ps1`
-once to get `ffmpeg.exe`.
+once to get `ffmpeg.exe`, `yt-dlp.exe` and `deno.exe`.
+
+`lanes video` downloads from YouTube and the other sites [yt-dlp](https://github.com/yt-dlp/yt-dlp)
+supports: yt-dlp reads the page, Lanes fetches the chosen formats over parallel connections and
+joins video and audio without re-encoding (`mp3` converts the audio). `--list` shows the formats
+and the `-f` choices. For logged-in or age-restricted videos pass the site's cookies with
+`--cookie` (the browser extension does this by itself). Lanes keeps yt-dlp up to date (checked at
+most once a day; `lanes video --update` now, `--rollback` to undo). You are responsible for what
+you download; some sites' terms forbid it.
 
 `lanes add` hands the download to a background Lanes engine (started automatically, it stops by
 itself when idle). Downloads, queues and settings are kept in `%LOCALAPPDATA%\Lanes\lanes.db`;

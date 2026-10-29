@@ -7,6 +7,7 @@ add_library(lanes_cli_lib STATIC
     commands.cpp
     organize.cpp
     queue.cpp
+    video.cpp
     format.cpp)
 target_include_directories(lanes_cli_lib PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(lanes_cli_lib PUBLIC lanes::core)

@@ -28,6 +28,22 @@ $pins = @(
         Sha256  = '023ba9e491ce616ea2e3c2b10b7c7df16a4714c0ec1dbf0f4e0f59aae04e73e8'
         Entry   = '/bin/ffmpeg.exe'
         License = 'LGPL-2.1-or-later (FFmpeg)'
+    },
+    @{
+        Name    = 'yt-dlp.exe'
+        # yt-dlp 2026.10.26 (SHA-256 from the release's SHA2-256SUMS). Lanes updates its own copy
+        # in %LOCALAPPDATA%\Lanes\bin at runtime; this is the bundled baseline.
+        Url     = 'https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp.exe'
+        Sha256  = 'f5389d3698ecde4ef06f4e6b1ce0294fe9ac1396228c8990b8d3416d6d177a7d'
+        License = 'Unlicense (yt-dlp)'
+    },
+    @{
+        Name    = 'deno.exe'
+        # Deno 2.9.8: the JavaScript runtime yt-dlp needs for YouTube.
+        Url     = 'https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-pc-windows-msvc.zip'
+        Sha256  = 'cba84b26e0df5ae7f74fc66b86a95b866872a86292ebd84fa1e959927edd93bf'
+        Entry   = 'deno.exe'
+        License = 'MIT (Deno)'
     }
 )
 

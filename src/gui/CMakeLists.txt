@@ -49,6 +49,7 @@ qt_add_qml_module(lanes_gui_lib
         qml/ToolButtonIcon.qml
         qml/MessageDialog.qml
         qml/SpeedLimitMenu.qml
+        qml/VideoDialog.qml
     RESOURCES
         ${PROJECT_SOURCE_DIR}/LICENSE
         ${PROJECT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md

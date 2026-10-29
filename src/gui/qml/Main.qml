@@ -51,6 +51,12 @@ ApplicationWindow {
         w.requestActivate()
         return w
     }
+    function openVideo(url, request) {
+        const w = videoComponent.createObject(null, { pageUrl: url, initialRequest: request || {} })
+        w.closing.connect(() => w.destroy())
+        w.show()
+        return w
+    }
     function openProgress(id) {
         let w = progressWindows[id]
         if (!w) {
@@ -84,6 +90,8 @@ ApplicationWindow {
             openSingleton("options", optionsComponent)
         else if (what === "queues")
             openSingleton("queues", queuesComponent)
+        else if (what.startsWith("video:"))
+            openVideo(what.substring(6), {})
         else if (what.startsWith("progress:"))
             openProgress(Number(what.substring(9)))
     }
@@ -136,6 +144,7 @@ ApplicationWindow {
         function onShowMainWindow() { root.bringUp() }
         function onAddUrlsRequested(urls, request) { root.openAdd(urls, request) }
         function onProgressWindowRequested(id) { root.openProgress(id) }
+        function onVideoPageRequested(url, request) { root.openVideo(url, request) }
     }
     // Keep the selection to rows that still exist.
     Connections {
@@ -149,6 +158,7 @@ ApplicationWindow {
 
     Component { id: addComponent; AddDialog {} }
     Component { id: progressComponent; ProgressWindow {} }
+    Component { id: videoComponent; VideoDialog {} }
     Component { id: optionsComponent; OptionsWindow {} }
     Component { id: queuesComponent; QueuesWindow {} }
 

@@ -49,6 +49,27 @@ core::Result<core::net::RequestOptions> build_request(const RequestArgs &args);
 int run_get(const GetArgs &args);
 int run_info(const RequestArgs &args);
 
+// `lanes video` (video.cpp): video sites through yt-dlp.
+struct VideoArgs {
+  RequestArgs request;         // the page; cookies for logged-in or age-restricted videos
+  std::string format = "best"; // best | <height>p | audio | mp3 | format ids
+  bool list = false;           // show formats (or playlist entries) only
+  std::string output;          // folder
+  std::string subs;            // subtitle languages "en,de"
+  bool thumbnail = false;
+  bool playlist = false; // the whole playlist, not just the video
+  std::string items;     // playlist entries "1-3,7"
+  int connections = 8;
+  std::string limit;
+  bool add = false; // hand to the background engine instead of downloading here
+  std::string queue;
+  bool quiet = false;
+  bool update = false;   // update yt-dlp now
+  bool rollback = false; // go back to the yt-dlp before the last update
+};
+
+int run_video(const VideoArgs &args);
+
 // --- engine commands (queue.cpp): talk to the background engine over the pipe ---
 
 struct AddArgs {

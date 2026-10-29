@@ -8,6 +8,7 @@
 #include <mutex>
 #include <thread>
 
+#include "core/extract/video.hpp"
 #include "core/limiter/rate_limiter.hpp"
 #include "core/media/stream.hpp"
 #include "core/net/probe.hpp"
@@ -213,6 +214,7 @@ struct Engine::Impl {
     info.connections = r.connections;
     info.speed_limit = r.speed_limit;
     info.referer = r.referer;
+    info.video = !r.video.empty();
     info.added_at = r.added_at;
     info.completed_at = r.completed_at;
     if (const auto it = live.find(r.id); it != live.end()) {
@@ -295,10 +297,17 @@ struct Engine::Impl {
     auto worker = std::make_unique<Worker>();
     worker->own_limit = std::make_shared<limiter::RateLimiter>(r.speed_limit);
     o.limiters.push_back(worker->own_limit);
-    worker->thread = std::jthread([this, id, o = std::move(o)](std::stop_token stop) {
-      auto result = media::download_any(std::move(o), stop); // files and HLS/DASH streams
-      on_finished(id, std::move(result));
-    });
+    worker->thread =
+        std::jthread([this, id, o = std::move(o), video = r.video](std::stop_token stop) {
+          if (!video.empty()) { // a video page: yt-dlp finds the formats
+            auto request = extract::parse_video_request(video);
+            on_finished(id, request ? extract::download_video(o, *request, stop)
+                                    : Result<engine::DownloadResult>(make_error(request.error())));
+            return;
+          }
+          auto result = media::download_any(std::move(o), stop); // files and HLS/DASH streams
+          on_finished(id, std::move(result));
+        });
     workers[id] = std::move(worker);
   }
 
@@ -555,6 +564,11 @@ Result<DownloadId> Engine::add(NewDownload n) {
   if (n.connections < 0 || n.connections > kMaxConnections) {
     return make_error(ErrorCode::InvalidArgument, "connections must be between 1 and 32");
   }
+  if (!n.video.empty()) {
+    if (auto request = extract::parse_video_request(n.video); !request) {
+      return make_error(request.error());
+    }
+  }
   Impl &d = *impl_;
 
   // The same URL already in the list (duplicate detection).
@@ -615,6 +629,7 @@ Result<DownloadId> Engine::add(NewDownload n) {
     r.directory = n.directory; // empty: the file's category decides when the download starts
     r.filename = n.filename.empty() ? std::string() : platform::sanitize_filename(n.filename);
     r.overwrite = n.overwrite_file;
+    r.video = n.video;
     r.queue = n.queue;
     r.start_now = n.queue.empty();
     r.start_at = n.start_at;

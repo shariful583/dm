@@ -16,6 +16,9 @@
 
 #include "core/batch/batch.hpp"
 #include "core/category/category.hpp"
+#include "core/extract/updater.hpp"
+#include "core/extract/video.hpp"
+#include "core/extract/ytdlp.hpp"
 #include "core/net/probe.hpp"
 #include "core/platform/credentials.hpp"
 #include "core/platform/path.hpp"
@@ -213,6 +216,16 @@ QVariantMap AppController::add(const QVariantMap &d) {
                    : dup == "resume"    ? core::DuplicateAction::Resume
                                         : core::DuplicateAction::Ask;
   n.overwrite_file = d.value("overwriteFile").toBool();
+  if (d.contains("video")) { // a video page: {format, subtitles, thumbnail}
+    const QVariantMap v = d.value("video").toMap();
+    core::extract::VideoRequest video;
+    video.format = utf8(v.value("format", QStringLiteral("best")).toString());
+    for (const QVariant &lang : v.value("subtitles").toList()) {
+      video.subtitles.push_back(utf8(lang.toString()));
+    }
+    video.thumbnail = v.value("thumbnail").toBool();
+    n.video = core::extract::to_json(video);
+  }
   auto id = engine_.add(std::move(n));
   if (!id) {
     return {{"ok", false},
@@ -479,6 +492,91 @@ QString AppController::removeLogin(const QString &host) {
   return status(core::platform::delete_login(utf8(host)));
 }
 
+// --- video sites ---
+
+void AppController::extractVideo(const QString &url, const QVariantMap &request) {
+  core::extract::ExtractOptions options;
+  options.page = {utf8(url.trimmed()), utf8(request.value("cookies").toString()),
+                  utf8(request.value("userAgent").toString()),
+                  utf8(request.value("referer").toString())};
+  options.playlist = request.value("playlist").toBool();
+  pool_.start([this, url, options] {
+    auto info = core::extract::extract(options);
+    QVariantMap result;
+    if (!info) {
+      result["ok"] = false;
+      result["error"] = error_text(info.error());
+    } else {
+      result["ok"] = true;
+      result["title"] = qstr(info->title);
+      result["uploader"] = qstr(info->uploader);
+      result["duration"] = info->duration;
+      result["thumbnail"] = qstr(info->thumbnail);
+      result["isPlaylist"] = info->is_playlist;
+      QVariantList entries;
+      for (const auto &e : info->entries) {
+        entries.push_back(
+            QVariantMap{{"url", qstr(e.url)}, {"title", qstr(e.title)}, {"duration", e.duration}});
+      }
+      result["entries"] = entries;
+      QVariantList choices;
+      const auto choice = [&choices](const QString &key, const QString &label,
+                                     const QString &detail) {
+        choices.push_back(QVariantMap{{"key", key}, {"label", label}, {"detail", detail}});
+      };
+      if (info->is_playlist) { // entries are read one by one later: generic choices
+        choice("best", tr("Best quality"), {});
+        for (const char *h : {"1080p", "720p", "480p"}) {
+          choice(QString::fromLatin1(h), tr("Up to %1").arg(QString::fromLatin1(h)), {});
+        }
+        choice("audio", tr("Audio only (M4A)"), {});
+        choice("mp3", tr("Audio only (MP3)"), {});
+      } else {
+        for (const auto &[key, s] : core::extract::quality_choices(*info)) {
+          QStringList detail{qstr(s.container).toUpper()};
+          if (s.video != nullptr && s.video->fps > 30) {
+            detail << QStringLiteral("%1 fps").arg(std::lround(s.video->fps));
+          }
+          if (s.size) {
+            detail << format_bytes(*s.size);
+          }
+          const QString k = qstr(key);
+          choice(k,
+                 k == "audio" ? tr("Audio only (%1)").arg(qstr(s.container).toUpper())
+                 : k == "mp3" ? tr("Audio only (MP3)")
+                              : k,
+                 detail.join(QStringLiteral(" · ")));
+        }
+      }
+      result["choices"] = choices;
+      QStringList languages;
+      for (const auto &[lang, files] : info->subtitles) {
+        languages << qstr(lang);
+      }
+      result["subtitles"] = languages;
+    }
+    // The pool is drained before the controller is destroyed, so `this` is still valid here.
+    QMetaObject::invokeMethod(
+        this, [this, url, result] { emit videoInfoReady(url, result); }, Qt::QueuedConnection);
+  });
+}
+
+void AppController::updateExtractor() {
+  pool_.start([this] {
+    auto r = core::extract::update_ytdlp({.force = true});
+    const bool ok = r.has_value();
+    const QString message = !r           ? error_text(r.error())
+                            : r->updated ? tr("yt-dlp was updated to %1.").arg(qstr(r->version))
+                                         : tr("yt-dlp is up to date (%1).").arg(qstr(r->version));
+    QMetaObject::invokeMethod(
+        this, [this, ok, message] { emit extractorUpdated(ok, message); }, Qt::QueuedConnection);
+  });
+}
+
+void AppController::checkExtractorUpdate() {
+  pool_.start([] { (void)core::extract::update_ytdlp({}); }); // at most daily; quiet
+}
+
 // --- browser extension ---
 
 QString AppController::handleBrowserMessage(const QString &message) {
@@ -498,11 +596,6 @@ QString AppController::handleBrowserMessage(const QString &message) {
     emit showMainWindow();
     return answer("accepted");
   }
-  if (type == QStringLiteral("video_page")) {
-    return answer("rejected", tr("Downloading from video sites needs yt-dlp, which this version "
-                                 "of Lanes does not include yet."));
-  }
-
   // The page a download came from is its referrer (also what "refresh address" reopens).
   QVariantMap request{
       {"referer", m.value("referrer").toString().isEmpty() ? m.value("pageUrl").toString()
@@ -510,6 +603,14 @@ QString AppController::handleBrowserMessage(const QString &message) {
       {"cookies", m.value("cookies").toString()},
       {"userAgent", m.value("userAgent").toString()},
   };
+
+  if (type == QStringLiteral("video_page")) {
+    if (!core::extract::find_ytdlp()) { // the extension then sends the media it saw instead
+      return answer("rejected", tr("yt-dlp is missing, so Lanes cannot read video pages."));
+    }
+    emit videoPageRequested(m.value("pageUrl").toString(), request); // the quality window
+    return answer("accepted");
+  }
 
   if (type == QStringLiteral("capture_download")) {
     const QString url = m.value("url").toString();

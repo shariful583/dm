@@ -26,7 +26,7 @@ include(LanesCompilerOptions)
 
 # Third-party programs fetched by tools/fetch-third-party.ps1 go next to the executables, where
 # Lanes looks for them. A hard link: no copy of a 100+ MB file per build folder.
-foreach(program ffmpeg.exe)
+foreach(program ffmpeg.exe yt-dlp.exe deno.exe)
     set(source ${PROJECT_SOURCE_DIR}/third_party/bin/${program})
     if(EXISTS ${source})
         file(MAKE_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
