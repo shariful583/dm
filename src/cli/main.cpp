@@ -10,8 +10,12 @@
 
 namespace {
 
-void add_request_options(CLI::App &cmd, lanes::cli::RequestArgs &r) {
-  cmd.add_option("url", r.url, "http, https or ftp address")->required();
+void add_request_options(CLI::App &cmd, lanes::cli::RequestArgs &r, bool url_required = true) {
+  auto *url = cmd.add_option("url", r.url, "http, https or ftp address");
+  if (url_required) {
+    url->required();
+  }
+
   cmd.add_option("-H,--header", r.headers, "Extra request header \"Name: value\" (repeatable)");
   cmd.add_option("--cookie", r.cookie, "Cookies \"name=value; name2=value2\"");
   cmd.add_option("--referer", r.referer, "Referer page");
@@ -47,6 +51,11 @@ int main(int argc, char **argv) {
   get_cmd->add_flag("--restart", get.restart,
                     "If the file changed on the server, download it again from the start");
   get_cmd->add_flag("-q,--quiet", get.quiet, "No progress or summary output");
+  get_cmd
+      ->add_option("--if-exists", get.if_exists,
+                   "File already there: overwrite | rename | fail (default: overwrite a file "
+                   "named with -o, rename one named by the server)")
+      ->check(CLI::IsMember({"overwrite", "rename", "fail"}));
 
   cli::RequestArgs info;
   auto *info_cmd = app.add_subcommand("info", "Show what the server says about a download");
@@ -55,8 +64,18 @@ int main(int argc, char **argv) {
   // --- through the background engine ---
   cli::AddArgs add;
   auto *add_cmd = app.add_subcommand("add", "Add a download to the background engine");
-  add_request_options(*add_cmd, add.request);
-  add_cmd->add_option("-o,--output", add.output, "Folder (or folder\\file name) to save into");
+  add_request_options(*add_cmd, add.request, false);
+  add_cmd->add_option("-o,--output", add.output,
+                      "Folder (or folder\\file name) to save into; default: the file's category "
+                      "folder");
+  add_cmd->add_option("--batch", add.batch, "Add every URL in this file (one per line)");
+  add_cmd->add_flag("--pattern", add.pattern,
+                    "Expand ranges in the URL: file[001-120].jpg, photo[a-f].png");
+  add_cmd
+      ->add_option("--if-exists", add.if_exists,
+                   "URL already in the list: ask | rename | overwrite | resume")
+      ->capture_default_str()
+      ->check(CLI::IsMember({"ask", "rename", "overwrite", "resume"}));
   add_cmd->add_option("--queue", add.queue, "Wait in this queue instead of starting now");
   add_cmd->add_option("--at", add.at, "Start at local time \"YYYY-MM-DD HH:MM\"");
   add_cmd->add_option("-c,--connections", add.connections, "Parallel connections, 1-32")
@@ -93,9 +112,40 @@ int main(int argc, char **argv) {
   run_cmd->add_option("--until", run.until, "Stop the queue at this time, HH:MM");
 
   std::vector<std::string> config_args;
-  auto *config_cmd = app.add_subcommand(
-      "config", "Show or change settings: download_dir, connections, max_active, speed_limit");
+  auto *config_cmd =
+      app.add_subcommand("config", "Show or change settings: download_dir, connections, "
+                                   "max_active, speed_limit, category_folders");
   config_cmd->add_option("key_value", config_args, "[key [value]]")->expected(0, 2);
+
+  // --- organize ---
+  auto *categories_cmd = app.add_subcommand("categories", "Show file categories and folders");
+  std::string category_name;
+  std::string category_ext;
+  std::string category_folder;
+  auto *category_cmd = app.add_subcommand("category", "Change file categories");
+  category_cmd->require_subcommand(1);
+  auto *category_set = category_cmd->add_subcommand("set", "Create or change a category");
+  category_set->add_option("name", category_name, "Category name, e.g. Video")->required();
+  category_set->add_option("--ext", category_ext, "Extensions, e.g. \"mp4,mkv,webm\"");
+  category_set->add_option("--folder", category_folder,
+                           "Folder (absolute, or relative to download_dir; \"default\" resets)");
+  auto *category_remove = category_cmd->add_subcommand("remove", "Remove a category");
+  category_remove->add_option("name", category_name)->required();
+  auto *category_reset = category_cmd->add_subcommand("reset", "Restore the default categories");
+
+  std::string login_host;
+  std::string login_user;
+  std::string login_password;
+  auto *login_cmd = app.add_subcommand("login", "Site logins (kept in Windows Credential Manager)");
+  login_cmd->require_subcommand(1);
+  auto *login_add = login_cmd->add_subcommand("add", "Save a login for a host");
+  login_add->add_option("host", login_host, "Host name or URL")->required();
+  login_add->add_option("user", login_user, "User name")->required();
+  auto *login_password_option = login_add->add_option("--password", login_password,
+                                                      "Password (omit to be asked without echo)");
+  auto *login_list = login_cmd->add_subcommand("list", "Show saved logins");
+  auto *login_remove = login_cmd->add_subcommand("remove", "Delete a saved login");
+  login_remove->add_option("host", login_host, "Host name or URL")->required();
 
   bool engine_stop = false;
   auto *engine_cmd = app.add_subcommand("engine", "Run the background engine (started on demand)");
@@ -138,6 +188,28 @@ int main(int argc, char **argv) {
   }
   if (engine_cmd->parsed()) {
     return cli::run_engine(engine_stop);
+  }
+  if (categories_cmd->parsed()) {
+    return cli::run_categories();
+  }
+  if (category_set->parsed()) {
+    return cli::run_category_set(category_name, category_ext, category_folder);
+  }
+  if (category_remove->parsed()) {
+    return cli::run_category_remove(category_name);
+  }
+  if (category_reset->parsed()) {
+    return cli::run_category_reset();
+  }
+  if (login_add->parsed()) {
+    return cli::run_login_add(login_host, login_user, login_password,
+                              login_password_option->count() > 0);
+  }
+  if (login_list->parsed()) {
+    return cli::run_login_list();
+  }
+  if (login_remove->parsed()) {
+    return cli::run_login_remove(login_host);
   }
   std::cout << app.help();
   return cli::kExitOk;

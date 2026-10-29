@@ -10,6 +10,8 @@ configure_file(version.hpp.in ${CMAKE_CURRENT_BINARY_DIR}/generated/core/version
 
 add_library(lanes_core STATIC
     error.cpp
+    batch/batch.cpp
+    category/category.cpp
     engine/download.cpp
     engine/download_state.cpp
     engine/engine.cpp
@@ -31,6 +33,7 @@ add_library(lanes::core ALIAS lanes_core)
 if(WIN32)
     target_sources(lanes_core PRIVATE
         platform/console_win.cpp
+        platform/credentials_win.cpp
         platform/file_win.cpp
         platform/fs_win.cpp
         platform/ipc_win.cpp

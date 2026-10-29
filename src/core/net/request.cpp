@@ -209,6 +209,25 @@ std::string filename_from_url(std::string_view url) {
   return percent_decode(slash == std::string_view::npos ? p : p.substr(slash + 1));
 }
 
+std::string host_of(std::string_view url) {
+  ensure_curl_initialized();
+  UrlHandle handle(curl_url());
+  const std::string copy(url);
+  if (!handle || curl_url_set(handle.get(), CURLUPART_URL, copy.c_str(), 0) != CURLUE_OK) {
+    return {};
+  }
+  char *raw = nullptr;
+  if (curl_url_get(handle.get(), CURLUPART_HOST, &raw, 0) != CURLUE_OK) {
+    return {};
+  }
+  const CurlString host(raw);
+  std::string out(host.get());
+  for (char &c : out) {
+    c = lower(c);
+  }
+  return out;
+}
+
 std::string strip_credentials(std::string_view url) {
   ensure_curl_initialized();
   UrlHandle handle(curl_url());

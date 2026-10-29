@@ -17,6 +17,10 @@ lanes get <url> [-o FILE|DIR\] [-c 8] [--limit 2M] [--sha256 HEX] [-H "Name: val
 lanes info <url>
 
 lanes add <url> [-o DIR\] [--queue NAME] [--at "YYYY-MM-DD HH:MM"]   # background download
+lanes add --batch urls.txt   |   lanes add --pattern "https://host/img[001-120].jpg"
+          [--if-exists ask|rename|overwrite|resume]                 # same URL already listed
+lanes categories   |   lanes category set Video --ext mp4,mkv [--folder D:\Films]
+lanes login add <host> <user>   |   lanes login list   |   lanes login remove <host>
 lanes list [--queue NAME]
 lanes pause <id|all>     lanes resume <id|all> [--url NEW-URL]     lanes remove <id> [--delete-file]
 lanes run [--queue main] [--max 3] [--until 07:00]                  # process a queue, live status
@@ -29,7 +33,8 @@ it stopped. If a link expired, run `lanes get <new-url> -o <same file>` to conti
 
 `lanes add` hands the download to a background Lanes engine (started automatically, it stops by
 itself when idle). Downloads, queues and settings are kept in `%LOCALAPPDATA%\Lanes\lanes.db`;
-cookies and passwords are never saved there.
+cookies and passwords are never saved there. Without `-o`, files go to a folder for their type
+(`Downloads\Video`, `Downloads\Music`, ...). Site logins are kept in Windows Credential Manager.
 
 ## Building (Windows)
 

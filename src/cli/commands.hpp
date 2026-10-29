@@ -38,6 +38,9 @@ struct GetArgs {
   bool no_resume = false;
   bool restart = false; // start over if the file changed on the server
   bool quiet = false;
+  // File already exists: "overwrite" | "rename" | "fail". Empty: overwrite when -o names the
+  // file, rename when the name comes from the server.
+  std::string if_exists;
 };
 
 core::Result<core::net::RequestOptions> build_request(const RequestArgs &args);
@@ -56,6 +59,9 @@ struct AddArgs {
   std::string limit;
   std::string sha256;
   std::string md5;
+  std::string batch;             // file with one URL per line (instead of request.url)
+  bool pattern = false;          // expand [001-120] / [a-z] ranges in the URL
+  std::string if_exists = "ask"; // URL already listed: ask | rename | overwrite | resume
 };
 
 struct RunArgs {
@@ -72,5 +78,17 @@ int run_remove(const std::string &id, bool delete_file);
 int run_queue(const RunArgs &args);
 int run_config(const std::vector<std::string> &args); // [] | [key] | [key, value]
 int run_engine(bool stop);
+
+// --- organize.cpp: file categories and site logins ---
+
+int run_categories();
+int run_category_set(const std::string &name, const std::string &extensions,
+                     const std::string &folder);
+int run_category_remove(const std::string &name);
+int run_category_reset();
+int run_login_add(const std::string &host, const std::string &user, const std::string &password,
+                  bool password_given);
+int run_login_list();
+int run_login_remove(const std::string &host);
 
 } // namespace lanes::cli

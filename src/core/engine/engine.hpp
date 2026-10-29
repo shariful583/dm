@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/category/category.hpp"
 #include "core/engine/download.hpp"
 #include "core/engine/download_state.hpp"
 #include "core/error.hpp"
@@ -19,6 +20,14 @@
 #include "core/verify/checksum.hpp"
 
 namespace lanes::core {
+
+// What add() does when a download with the same URL is already in the list.
+enum class DuplicateAction {
+  Ask,       // AlreadyExists error naming the existing download (the front-end asks the user)
+  Rename,    // add anyway, saving as "name (2).ext"
+  Overwrite, // remove the existing one (and its files), then add
+  Resume,    // resume the existing one instead; add() returns its id
+};
 
 // A download to add. Secrets in `request` (cookies, credentials, POST body, Cookie /
 // Authorization headers, proxy login) are kept in memory only and lost when the engine restarts.
@@ -31,14 +40,18 @@ struct NewDownload {
   int connections = 0;                  // 0 = the connections setting
   std::uint64_t speed_limit = 0;        // bytes/s, 0 = none (the global limit still applies)
   std::optional<verify::Checksum> checksum;
+  DuplicateAction if_duplicate = DuplicateAction::Ask;
+  // A file of the same name already on disk: replace it, or (default) save under a free name.
+  bool overwrite_file = false;
 };
 
 // Snapshot of one download for front-ends.
 struct DownloadInfo {
   DownloadId id = 0;
   std::string url;
-  std::string filename; // the server's / given name; a guess from the URL until known
-  std::filesystem::path directory;
+  std::string filename;            // the server's / given name; a guess from the URL until known
+  std::filesystem::path directory; // empty until known when the file's category picks it
+  std::string category;            // "Video", ..., or "General"
   std::string queue;
   DownloadState state = DownloadState::Queued;
   bool start_now = false;
@@ -69,7 +82,8 @@ struct EngineConfig {
 // The download manager (front-ends talk to core only through this and its events).
 // Owns the database, the queues and scheduler, the global speed limit, and one worker thread per
 // running download. Settings: download_dir, connections (8), max_active (4, all downloads),
-// speed_limit (0 = none, bytes/s).
+// speed_limit (0 = none, bytes/s), category_folders (1: downloads without a folder go to their
+// category's folder). File categories are edited with categories() / set_categories().
 //
 // Thread safety: every member may be called from any thread. Event callbacks run on engine or
 // download threads, without engine locks held; they must not block for long.
@@ -91,6 +105,10 @@ public:
 
   std::vector<DownloadInfo> list() const;
   std::optional<DownloadInfo> get(DownloadId id) const;
+  std::optional<DownloadId> find_by_url(const std::string &url) const;
+
+  std::vector<category::Category> categories() const;
+  Result<void> set_categories(std::vector<category::Category> categories);
 
   std::vector<queue::QueueSettings> queues() const;
   Result<void> save_queue(const queue::QueueSettings &queue); // create or change

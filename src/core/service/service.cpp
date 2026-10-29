@@ -46,6 +46,40 @@ std::optional<net::Credentials> credentials(const json &j, const char *key) {
   return net::Credentials{(*it)[0].get<std::string>(), (*it)[1].get<std::string>()};
 }
 
+const char *duplicate_name(DuplicateAction a) {
+  switch (a) {
+  case DuplicateAction::Rename:
+    return "rename";
+  case DuplicateAction::Overwrite:
+    return "overwrite";
+  case DuplicateAction::Resume:
+    return "resume";
+  case DuplicateAction::Ask:
+    break;
+  }
+  return "ask";
+}
+
+std::optional<DuplicateAction> parse_duplicate(const std::string &text) {
+  if (text.empty() || text == "ask") {
+    return DuplicateAction::Ask;
+  }
+  if (text == "rename") {
+    return DuplicateAction::Rename;
+  }
+  if (text == "overwrite") {
+    return DuplicateAction::Overwrite;
+  }
+  if (text == "resume") {
+    return DuplicateAction::Resume;
+  }
+  return std::nullopt;
+}
+
+json categories_json(const std::vector<category::Category> &categories) {
+  return json::parse(category::to_json(categories));
+}
+
 json to_json(const NewDownload &n) {
   json headers = json::array();
   for (const auto &[name, value] : n.request.headers) {
@@ -73,6 +107,8 @@ json to_json(const NewDownload &n) {
                                                      : "sha256:") +
                                      n.checksum->hex)
                               : json(nullptr)},
+      {"if_duplicate", duplicate_name(n.if_duplicate)},
+      {"overwrite_file", n.overwrite_file},
   };
 }
 
@@ -116,6 +152,13 @@ Result<NewDownload> new_download(const json &j) {
     }
     n.checksum = *c;
   }
+  const auto duplicate = parse_duplicate(str(j, "if_duplicate"));
+  if (!duplicate) {
+    return make_error(ErrorCode::InvalidArgument, "if_duplicate must be ask, rename, overwrite "
+                                                  "or resume");
+  }
+  n.if_duplicate = *duplicate;
+  n.overwrite_file = j.value("overwrite_file", false);
   return n;
 }
 
@@ -129,6 +172,7 @@ json to_json(const DownloadInfo &d) {
       {"url", d.url},
       {"filename", d.filename},
       {"directory", platform::path_to_utf8(d.directory)},
+      {"category", d.category},
       {"queue", d.queue},
       {"state", std::string(to_string(d.state))},
       {"start_now", d.start_now},
@@ -151,6 +195,7 @@ DownloadInfo download_info(const json &j) {
   d.url = str(j, "url");
   d.filename = str(j, "filename");
   d.directory = platform::path_from_utf8(str(j, "directory"));
+  d.category = str(j, "category");
   d.queue = str(j, "queue");
   d.state = parse_download_state(str(j, "state")).value_or(DownloadState::Queued);
   d.start_now = j.value("start_now", false);
@@ -317,6 +362,16 @@ std::string EngineService::handle(std::string_view request) {
     }
     if (cmd == "queue_save") {
       return respond(engine_.save_queue(queue_settings(j.value("queue", json::object()))));
+    }
+    if (cmd == "categories") {
+      return ok({{"categories", categories_json(engine_.categories())}});
+    }
+    if (cmd == "set_categories") {
+      auto parsed = category::from_json(j.value("categories", json::array()).dump());
+      if (!parsed) {
+        return failure(parsed.error());
+      }
+      return respond(engine_.set_categories(std::move(*parsed)));
     }
     if (cmd == "settings") {
       json settings = json::object();
@@ -555,5 +610,18 @@ Result<void> EngineClient::set_setting(const std::string &key, const std::string
 }
 
 Result<void> EngineClient::shutdown_engine() { return exchange_void(*this, {{"cmd", "shutdown"}}); }
+
+Result<std::vector<category::Category>> EngineClient::categories() {
+  auto r = exchange(*this, {{"cmd", "categories"}});
+  if (!r) {
+    return make_error(r.error());
+  }
+  return category::from_json(r->value("categories", json::array()).dump());
+}
+
+Result<void> EngineClient::set_categories(const std::vector<category::Category> &categories) {
+  return exchange_void(*this,
+                       {{"cmd", "set_categories"}, {"categories", categories_json(categories)}});
+}
 
 } // namespace lanes::core::service

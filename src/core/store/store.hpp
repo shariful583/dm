@@ -25,9 +25,9 @@ struct DownloadRecord {
   std::string user_agent;
   std::vector<std::pair<std::string, std::string>> headers; // non-secret only
   std::string proxy;                                        // without credentials
-  std::filesystem::path directory;
-  std::string filename; // empty until known (given, or learned when the download starts)
-  std::string queue;    // empty = not in a queue
+  std::filesystem::path directory; // empty until known when file categories choose it
+  std::string filename;            // empty until known (given, or learned when the download starts)
+  std::string queue;               // empty = not in a queue
   DownloadState state = DownloadState::Queued;
   bool start_now = false; // starts without waiting for its queue ("Download now" / resume)
   std::optional<std::int64_t> start_at; // unix seconds
@@ -39,6 +39,7 @@ struct DownloadRecord {
   std::string error;
   std::int64_t added_at = 0;
   std::optional<std::int64_t> completed_at;
+  bool overwrite = false; // replace an existing file of the same name (else pick a free name)
 };
 
 // The Lanes database: downloads, queues, settings. Uses WAL mode and NORMAL sync (few disk

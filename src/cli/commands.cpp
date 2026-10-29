@@ -136,6 +136,18 @@ int run_get(const GetArgs &args) {
       options.filename = core::platform::path_to_utf8(out.filename());
     }
   }
+  // An existing file: overwrite one the user named with -o; keep it and pick a free name when
+  // the name came from the server.
+  if (args.if_exists == "overwrite") {
+    options.if_file_exists = core::engine::ExistingFile::Overwrite;
+  } else if (args.if_exists == "rename") {
+    options.if_file_exists = core::engine::ExistingFile::Rename;
+  } else if (args.if_exists == "fail") {
+    options.if_file_exists = core::engine::ExistingFile::Fail;
+  } else {
+    options.if_file_exists = options.filename.empty() ? core::engine::ExistingFile::Rename
+                                                      : core::engine::ExistingFile::Overwrite;
+  }
 
   const bool live = !args.quiet && core::platform::stderr_is_terminal();
   std::string shown_name = options.filename;

@@ -70,6 +70,8 @@ public:
   Result<void> stop_queue(const std::string &name);
   Result<std::vector<std::pair<std::string, std::string>>> settings();
   Result<void> set_setting(const std::string &key, const std::string &value);
+  Result<std::vector<category::Category>> categories();
+  Result<void> set_categories(const std::vector<category::Category> &categories);
   Result<void> shutdown_engine();
 
   // Raw request/response (JSON text), for tools and tests.

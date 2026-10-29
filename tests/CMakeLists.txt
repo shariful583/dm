@@ -11,6 +11,7 @@ add_executable(lanes_tests
     core/limiter/rate_limiter_test.cpp
     core/net/probe_test.cpp
     core/net/request_test.cpp
+    core/organize_test.cpp
     core/queue/schedule_test.cpp
     core/platform/path_test.cpp
     testserver/content_test.cpp
@@ -33,6 +34,7 @@ if(WIN32)
         core/engine/download_test.cpp
         core/engine/engine_test.cpp
         core/engine/limit_test.cpp
+        core/engine/organize_engine_test.cpp
         core/engine/resume_test.cpp
         core/engine/retry_test.cpp
         core/platform/file_test.cpp

@@ -32,4 +32,8 @@ std::filesystem::path to_long_path(const std::filesystem::path &path);
 std::string sanitize_filename(std::string_view name, std::string_view fallback = "download",
                               std::size_t max_utf16_units = 255);
 
+// `name` if neither it nor its ".part" exists in `directory`, else the first free
+// "stem (2).ext", "stem (3).ext", ... (UTF-8). Thread-safe, but racy against other writers.
+std::string unique_filename(const std::filesystem::path &directory, const std::string &name);
+
 } // namespace lanes::core::platform

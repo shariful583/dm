@@ -12,7 +12,9 @@
 
 #include "cli/commands.hpp"
 #include "cli/format.hpp"
+#include "core/batch/batch.hpp"
 #include "core/platform/console.hpp"
+#include "core/platform/fs.hpp"
 #include "core/platform/path.hpp"
 #include "core/platform/system.hpp"
 #include "core/queue/schedule.hpp"
@@ -80,8 +82,35 @@ std::string state_label(const core::DownloadInfo &d) {
 } // namespace
 
 int run_add(const AddArgs &args) {
+  // Which URLs: a list file, an expanded pattern, or the one given.
+  std::vector<std::string> urls;
+  if (!args.batch.empty()) {
+    auto text = core::platform::read_small_file(core::platform::path_from_utf8(args.batch));
+    if (!text) {
+      std::cerr << "error: " << text.error().message << '\n';
+      return kExitUsage;
+    }
+    urls = core::batch::parse_url_list(*text);
+  } else if (args.pattern) {
+    auto expanded = core::batch::expand_pattern(args.request.url);
+    if (!expanded) {
+      std::cerr << "error: " << expanded.error().message << '\n';
+      return kExitUsage;
+    }
+    urls = std::move(*expanded);
+  } else if (!args.request.url.empty()) {
+    urls.push_back(args.request.url);
+  }
+  if (urls.empty()) {
+    std::cerr << "error: give a URL, or --batch FILE with one URL per line\n";
+    return kExitUsage;
+  }
+  const bool several = urls.size() > 1 || !args.batch.empty();
+
   core::NewDownload n;
-  auto request = build_request(args.request);
+  RequestArgs first = args.request;
+  first.url = urls.front();
+  auto request = build_request(first);
   if (!request) {
     std::cerr << "error: " << request.error().message << '\n';
     return kExitUsage;
@@ -92,12 +121,25 @@ int run_add(const AddArgs &args) {
   if (!args.output.empty()) {
     const fs::path out = fs::absolute(core::platform::path_from_utf8(args.output), ec);
     const char last = args.output.back();
-    if (last == '/' || last == '\\' || fs::is_directory(out, ec)) {
-      n.directory = out;
+    if (several || last == '/' || last == '\\' || fs::is_directory(out, ec)) {
+      n.directory = out; // a batch always goes into a folder
     } else {
       n.directory = out.parent_path();
       n.filename = core::platform::path_to_utf8(out.filename());
     }
+  }
+  if (args.if_exists == "ask") {
+    n.if_duplicate = core::DuplicateAction::Ask;
+  } else if (args.if_exists == "rename") {
+    n.if_duplicate = core::DuplicateAction::Rename;
+  } else if (args.if_exists == "overwrite") {
+    n.if_duplicate = core::DuplicateAction::Overwrite;
+    n.overwrite_file = true;
+  } else if (args.if_exists == "resume") {
+    n.if_duplicate = core::DuplicateAction::Resume;
+  } else {
+    std::cerr << "error: --if-exists must be ask, rename, overwrite or resume\n";
+    return kExitUsage;
   }
   n.queue = args.queue;
   n.connections = args.connections;
@@ -133,8 +175,48 @@ int run_add(const AddArgs &args) {
   if (!client) {
     return report(client.error());
   }
+
+  if (several) {
+    int added = 0;
+    int skipped = 0;
+    int failed = 0;
+    for (const auto &url : urls) {
+      core::NewDownload one = n;
+      one.request.url = url;
+      if (auto valid = core::net::validate_url(url); !valid) {
+        std::cerr << "skipped " << url << ": " << valid.error().message << '\n';
+        ++failed;
+        continue;
+      }
+      auto id = client->add(one);
+      if (id) {
+        ++added;
+      } else if (id.error().code == ErrorCode::AlreadyExists) {
+        std::cerr << "skipped " << url << ": " << id.error().message << '\n';
+        ++skipped;
+      } else {
+        std::cerr << "failed " << url << ": " << id.error().message << '\n';
+        ++failed;
+      }
+    }
+    std::cout << "Added " << added << " of " << urls.size() << " download(s)";
+    if (skipped > 0) {
+      std::cout << ", " << skipped << " already in the list";
+    }
+    if (failed > 0) {
+      std::cout << ", " << failed << " failed";
+    }
+    std::cout << (n.queue.empty() ? "" : " (queue '" + n.queue + "')") << ".\n";
+    return failed == 0 ? kExitOk : kExitError;
+  }
+
   auto id = client->add(n);
   if (!id) {
+    if (id.error().code == ErrorCode::AlreadyExists) {
+      std::cerr << "error: " << id.error().message << '\n'
+                << "hint: --if-exists resume | rename | overwrite\n";
+      return kExitError;
+    }
     return report(id.error());
   }
   std::cout << "Added #" << *id;

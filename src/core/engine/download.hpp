@@ -33,9 +33,22 @@ struct DownloadProgress {
   std::vector<SegmentProgress> segments; // one per connection, in file order
 };
 
+// What to do when the final file already exists (a resumed .part is never a conflict).
+enum class ExistingFile {
+  Overwrite, // replace it when the download completes
+  Rename,    // use "name (2).ext", "name (3).ext", ...
+  Fail,      // AlreadyExists
+};
+
 struct DownloadOptions {
   net::RequestOptions request;
-  std::filesystem::path directory; // created if missing
+  // Created if missing. Empty: `choose_directory(final file name)` decides (file categories).
+  std::filesystem::path directory;
+  std::function<std::filesystem::path(const std::string &filename)> choose_directory;
+  ExistingFile if_file_exists = ExistingFile::Overwrite;
+  // Without request.auth, use the login saved for the URL's host (Windows Credential Manager).
+  // curl sends it only when the server asks (401).
+  bool use_saved_logins = true;
   // File name inside `directory`; empty = the server's suggestion. Always sanitized.
   std::string filename;
   // Result of an earlier probe (e.g. from the add dialog); probed here if empty. POST downloads

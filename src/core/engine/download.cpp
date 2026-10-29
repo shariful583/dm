@@ -11,6 +11,7 @@
 
 #include "core/engine/speed_meter.hpp"
 #include "core/net/curl.hpp"
+#include "core/platform/credentials.hpp"
 #include "core/platform/file.hpp"
 #include "core/platform/fs.hpp"
 #include "core/platform/path.hpp"
@@ -199,7 +200,7 @@ private:
   static std::size_t on_write(char *data, std::size_t size, std::size_t count, void *user);
 
   Result<void> on_response(Connection &c);
-  void set_paths(const std::string &name);
+  Result<void> set_paths(const std::string &name);
   Result<void> prepare_file();
   Result<bool> open_existing_part();
   std::optional<resume::ResumeState> load_resume_state();
@@ -234,8 +235,9 @@ private:
   void report_progress(bool force);
   bool dynamic() const { return ranged_; }
 
-  const DownloadOptions &options_;
+  DownloadOptions options_; // own copy: a saved login may be filled in
   std::stop_token stop_;
+  fs::path directory_; // where the file goes (given, or chosen by its category)
 
   std::optional<net::ProbeResult> info_;
   std::vector<std::unique_ptr<Connection>> connections_;
@@ -378,27 +380,50 @@ Result<void> Downloader::on_response(Connection &c) {
   return {};
 }
 
-void Downloader::set_paths(const std::string &name) {
-  final_path_ = options_.directory / platform::path_from_utf8(name);
+Result<void> Downloader::set_paths(const std::string &name) {
+  if (!options_.directory.empty()) {
+    directory_ = options_.directory;
+  } else if (options_.choose_directory) {
+    directory_ = options_.choose_directory(name);
+  } else {
+    std::error_code ec;
+    directory_ = fs::current_path(ec);
+  }
+  std::string chosen = name;
+  std::error_code ec;
+  if (options_.if_file_exists != ExistingFile::Overwrite &&
+      fs::exists(platform::to_long_path(directory_ / platform::path_from_utf8(name)), ec)) {
+    if (options_.if_file_exists == ExistingFile::Fail) {
+      return make_error(ErrorCode::AlreadyExists,
+                        "'" + name + "' already exists in " + platform::path_to_utf8(directory_));
+    }
+    chosen = platform::unique_filename(directory_, name);
+  }
+  final_path_ = directory_ / platform::path_from_utf8(chosen);
   part_path_ = final_path_;
   part_path_ += ".part";
   sidecar_path_ = resume::sidecar_path(final_path_);
   if (options_.on_target) {
     options_.on_target(final_path_);
   }
+  return {};
 }
 
 // New .part file: folder, space check, sized up front (sparse where supported).
 Result<void> Downloader::prepare_file() {
   if (final_path_.empty()) {
-    set_paths(options_.filename.empty() ? info_->filename
-                                        : platform::sanitize_filename(options_.filename));
+    if (auto ok =
+            set_paths(options_.filename.empty() ? info_->filename
+                                                : platform::sanitize_filename(options_.filename));
+        !ok) {
+      return ok;
+    }
   }
-  if (auto ok = platform::create_directories(options_.directory); !ok) {
+  if (auto ok = platform::create_directories(directory_); !ok) {
     return ok;
   }
   if (info_->size) {
-    if (auto ok = platform::check_can_store(options_.directory, *info_->size); !ok) {
+    if (auto ok = platform::check_can_store(directory_, *info_->size); !ok) {
       return ok;
     }
   }
@@ -1170,10 +1195,18 @@ Result<DownloadResult> Downloader::run() {
   if (options_.speed_limit > 0) {
     limiters_.push_back(std::make_shared<limiter::RateLimiter>(options_.speed_limit));
   }
+  // A saved site login, unless the caller supplied credentials.
+  if (options_.use_saved_logins && !options_.request.auth) {
+    if (auto login = platform::find_login(net::host_of(options_.request.url)); login && *login) {
+      options_.request.auth = net::Credentials{(*login)->username, (*login)->password};
+    }
+  }
   // A caller-given name is known before probing, so a refused probe can be recognised as an
   // expired address of a download that already has data.
   if (!options_.filename.empty()) {
-    set_paths(platform::sanitize_filename(options_.filename));
+    if (auto ok = set_paths(platform::sanitize_filename(options_.filename)); !ok) {
+      return make_error(ok.error());
+    }
   }
   if (options_.probe) {
     info_ = options_.probe;
@@ -1199,7 +1232,9 @@ Result<DownloadResult> Downloader::run() {
   int segments = 1;
   if (ranged_) {
     if (final_path_.empty()) {
-      set_paths(info_->filename);
+      if (auto ok = set_paths(info_->filename); !ok) {
+        return make_error(ok.error());
+      }
     }
     std::optional<resume::ResumeState> saved;
     if (options_.resume) {

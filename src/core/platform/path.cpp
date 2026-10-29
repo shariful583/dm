@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstdint>
+#include <random>
 #include <system_error>
 #include <vector>
 
@@ -220,6 +221,32 @@ std::string sanitize_filename(std::string_view name, std::string_view fallback,
 
   std::string out = join(cps);
   return out.empty() ? std::string(fallback) : out;
+}
+
+std::string unique_filename(const std::filesystem::path &directory, const std::string &name) {
+  const auto taken = [&](const std::string &candidate) {
+    std::error_code ec;
+    const std::filesystem::path file = directory / path_from_utf8(candidate);
+    std::filesystem::path part = file;
+    part += ".part";
+    return std::filesystem::exists(to_long_path(file), ec) ||
+           std::filesystem::exists(to_long_path(part), ec);
+  };
+  if (!taken(name)) {
+    return name;
+  }
+  // "archive.tar.gz" → "archive (2).tar.gz" would be nicer, but one extension is the convention.
+  const auto dot = name.rfind('.');
+  const bool has_ext = dot != std::string::npos && dot > 0;
+  const std::string stem = has_ext ? name.substr(0, dot) : name;
+  const std::string ext = has_ext ? name.substr(dot) : std::string();
+  for (int n = 2; n < 10000; ++n) {
+    const std::string candidate = stem + " (" + std::to_string(n) + ")" + ext;
+    if (!taken(candidate)) {
+      return candidate;
+    }
+  }
+  return stem + " (" + std::to_string(std::random_device{}()) + ")" + ext;
 }
 
 } // namespace lanes::core::platform

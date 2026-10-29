@@ -100,6 +100,7 @@ struct Engine::Impl {
   std::map<DownloadId, Live> live;
   std::map<std::string, queue::QueueSettings> queues;
   std::map<std::string, std::string> settings;
+  std::vector<category::Category> categories = category::default_categories();
   std::map<DownloadId, std::unique_ptr<Worker>> workers;
   std::vector<std::unique_ptr<Worker>> graveyard; // finished workers to join without the lock
   std::vector<EngineEvent> pending_events;
@@ -165,12 +166,41 @@ struct Engine::Impl {
     return it != workers.end() && !it->second->finished;
   }
 
+  bool category_folders_locked() const { return setting_uint_locked("category_folders", 1) != 0; }
+
+  fs::path folder_for_locked(const std::string &filename, const fs::path &directory) const {
+    if (!directory.empty()) {
+      return directory;
+    }
+    return category_folders_locked()
+               ? category::folder_for(categories, filename, default_directory_locked())
+               : default_directory_locked();
+  }
+
+  // `base`, or "stem (2).ext", ...: not used by another download in the list nor taken on disk.
+  std::string free_name_locked(const std::string &base, const fs::path &directory) const {
+    const fs::path folder = folder_for_locked(base, directory);
+    const auto used = [&](const std::string &name) {
+      return std::any_of(records.begin(), records.end(),
+                         [&](const auto &entry) { return entry.second.filename == name; });
+    };
+    std::string candidate = platform::unique_filename(folder, base);
+    const auto dot = base.rfind('.');
+    const std::string stem = dot != std::string::npos && dot > 0 ? base.substr(0, dot) : base;
+    const std::string ext = dot != std::string::npos && dot > 0 ? base.substr(dot) : "";
+    for (int k = 2; used(candidate) && k < 10000; ++k) {
+      candidate = platform::unique_filename(folder, stem + " (" + std::to_string(k) + ")" + ext);
+    }
+    return candidate;
+  }
+
   DownloadInfo info_locked(const store::DownloadRecord &r) const {
     DownloadInfo info;
     info.id = r.id;
     info.url = r.url;
     info.filename = r.filename.empty() ? net::suggest_filename("", r.url) : r.filename;
     info.directory = r.directory;
+    info.category = category::category_name(categories, info.filename);
     info.queue = r.queue;
     info.state = r.state;
     info.start_now = r.start_now;
@@ -210,7 +240,19 @@ struct Engine::Impl {
       o.request.proxy.credentials = s.proxy_credentials;
     }
     o.directory = r.directory;
+    if (o.directory.empty()) {
+      // Decided once the real file name is known (Content-Disposition, redirects).
+      const fs::path base = default_directory_locked();
+      if (category_folders_locked()) {
+        o.choose_directory = [cats = categories, base](const std::string &name) {
+          return category::folder_for(cats, name, base);
+        };
+      } else {
+        o.directory = base;
+      }
+    }
     o.filename = r.filename;
+    o.if_file_exists = r.overwrite ? engine::ExistingFile::Overwrite : engine::ExistingFile::Rename;
     o.connections = static_cast<int>(
         std::clamp<std::uint64_t>(r.connections > 0 ? static_cast<std::uint64_t>(r.connections)
                                                     : setting_uint_locked("connections", 8),
@@ -272,11 +314,19 @@ struct Engine::Impl {
     publish();
   }
 
+  // The download decided its file: remember it, so a resume uses the same file (also after a
+  // rename to "name (2).ext" or a category folder).
   void on_target(DownloadId id, const fs::path &path) {
     std::lock_guard lock(mutex);
-    if (const auto it = records.find(id); it != records.end() && it->second.filename.empty()) {
-      it->second.filename = platform::path_to_utf8(path.filename());
-      persist_locked(it->second);
+    if (const auto it = records.find(id); it != records.end()) {
+      auto &r = it->second;
+      const std::string name = platform::path_to_utf8(path.filename());
+      if (r.filename != name || r.directory != path.parent_path()) {
+        r.filename = name;
+        r.directory = path.parent_path();
+        persist_locked(r);
+        emit_locked(EngineEvent::Kind::Changed, id);
+      }
     }
   }
 
@@ -464,7 +514,13 @@ Result<std::unique_ptr<Engine>> Engine::open(EngineConfig config) {
                                 : (!queues ? queues.error() : downloads.error()));
   }
   for (auto &[key, value] : *settings) {
-    d.settings[key] = value;
+    if (key == "categories") {
+      if (auto parsed = category::from_json(value)) {
+        d.categories = std::move(*parsed);
+      }
+    } else {
+      d.settings[key] = value;
+    }
   }
   for (auto &q : *queues) {
     d.queues[q.name] = q;
@@ -495,6 +551,40 @@ Result<DownloadId> Engine::add(NewDownload n) {
     return make_error(ErrorCode::InvalidArgument, "connections must be between 1 and 32");
   }
   Impl &d = *impl_;
+
+  // The same URL already in the list (duplicate detection).
+  if (const auto existing = find_by_url(n.request.url)) {
+    const auto info = get(*existing);
+    switch (n.if_duplicate) {
+    case DuplicateAction::Ask:
+      return make_error(ErrorCode::AlreadyExists,
+                        "already in the list as #" + std::to_string(*existing) + " (" +
+                            std::string(to_string(info ? info->state : DownloadState::Queued)) +
+                            ")");
+    case DuplicateAction::Resume:
+      if (info && info->state != DownloadState::Completed) {
+        if (auto ok = resume(*existing); !ok) {
+          return make_error(ok.error());
+        }
+      }
+      return *existing;
+    case DuplicateAction::Overwrite:
+      if (auto ok = remove(*existing, true); !ok) {
+        return make_error(ok.error());
+      }
+      n.overwrite_file = true;
+      break;
+    case DuplicateAction::Rename: {
+      std::lock_guard lock(d.mutex);
+      const std::string base = !n.filename.empty() ? platform::sanitize_filename(n.filename)
+                               : info              ? info->filename
+                                                   : net::suggest_filename("", n.request.url);
+      n.filename = d.free_name_locked(base, n.directory);
+      break;
+    }
+    }
+  }
+
   DownloadId id = 0;
   {
     std::lock_guard lock(d.mutex);
@@ -517,8 +607,9 @@ Result<DownloadId> Engine::add(NewDownload n) {
         s.proxy_url = n.request.proxy.url;
       }
     }
-    r.directory = n.directory.empty() ? d.default_directory_locked() : n.directory;
+    r.directory = n.directory; // empty: the file's category decides when the download starts
     r.filename = n.filename.empty() ? std::string() : platform::sanitize_filename(n.filename);
+    r.overwrite = n.overwrite_file;
     r.queue = n.queue;
     r.start_now = n.queue.empty();
     r.start_at = n.start_at;
@@ -630,8 +721,10 @@ Result<void> Engine::remove(DownloadId id, bool delete_files) {
       return make_error(ErrorCode::NotFound, "no download #" + std::to_string(id));
     }
     const auto &r = it->second;
-    const fs::path final_path =
-        r.filename.empty() ? fs::path() : r.directory / platform::path_from_utf8(r.filename);
+    // No folder yet means it never started: there are no files to delete.
+    const fs::path final_path = r.filename.empty() || r.directory.empty()
+                                    ? fs::path()
+                                    : r.directory / platform::path_from_utf8(r.filename);
     if (d.worker_active_locked(id)) {
       auto &w = *d.workers[id];
       w.removed = true;
@@ -693,6 +786,39 @@ std::optional<DownloadInfo> Engine::get(DownloadId id) const {
     return std::nullopt;
   }
   return d.info_locked(it->second);
+}
+
+std::optional<DownloadId> Engine::find_by_url(const std::string &url) const {
+  const Impl &d = *impl_;
+  std::lock_guard lock(d.mutex);
+  for (const auto &[id, r] : d.records) {
+    if (r.url == url) {
+      return id;
+    }
+  }
+  return std::nullopt;
+}
+
+std::vector<category::Category> Engine::categories() const {
+  const Impl &d = *impl_;
+  std::lock_guard lock(d.mutex);
+  return d.categories;
+}
+
+Result<void> Engine::set_categories(std::vector<category::Category> categories) {
+  for (const auto &c : categories) {
+    if (c.name.empty() || c.name == category::kGeneral) {
+      return make_error(ErrorCode::InvalidArgument,
+                        "a category needs a name other than \"General\" (the fallback)");
+    }
+  }
+  Impl &d = *impl_;
+  std::lock_guard lock(d.mutex);
+  if (auto ok = d.store.set_setting("categories", category::to_json(categories)); !ok) {
+    return ok;
+  }
+  d.categories = std::move(categories);
+  return {};
 }
 
 std::vector<queue::QueueSettings> Engine::queues() const {
@@ -763,6 +889,7 @@ std::vector<std::pair<std::string, std::string>> Engine::settings() const {
       {"connections", "8"},
       {"max_active", "4"},
       {"speed_limit", "0"},
+      {"category_folders", "1"},
   };
   for (const auto &[key, value] : d.settings) {
     values[key] = value;
@@ -788,10 +915,15 @@ Result<void> Engine::set_setting(const std::string &key, const std::string &valu
     if (value.empty()) {
       return make_error(ErrorCode::InvalidArgument, "download_dir cannot be empty");
     }
+  } else if (key == "category_folders") {
+    if (!number || *number > 1) {
+      return make_error(ErrorCode::InvalidArgument, "category_folders must be 0 or 1");
+    }
   } else {
     return make_error(ErrorCode::InvalidArgument,
                       "unknown setting '" + key +
-                          "' (known: download_dir, connections, max_active, speed_limit)");
+                          "' (known: download_dir, connections, max_active, speed_limit, "
+                          "category_folders)");
   }
   Impl &d = *impl_;
   std::lock_guard lock(d.mutex);
