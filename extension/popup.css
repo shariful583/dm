@@ -1,0 +1,81 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+:root {
+  color-scheme: light dark;
+  --bg: #f9f9f9;
+  --card: #ffffff;
+  --text: #1b1b1b;
+  --muted: #616161;
+  --line: rgba(0, 0, 0, 0.08);
+  --accent: #005fb8;
+  --bad: #c42b1c;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #202020;
+    --card: #2b2b2b;
+    --text: #ffffff;
+    --muted: #b3b3b3;
+    --line: rgba(255, 255, 255, 0.08);
+    --accent: #60cdff;
+    --bad: #ff99a4;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  width: 360px;
+  margin: 0;
+  padding: 12px;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.4 "Segoe UI", system-ui, sans-serif;
+}
+header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+h1 { font-size: 16px; margin: 0; flex: 1; }
+h2 { font-size: 13px; margin: 0; }
+.status { font-size: 12px; color: var(--accent); }
+.status.bad { color: var(--bad); }
+section, details {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.row { display: flex; align-items: center; gap: 8px; }
+.hint { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+kbd { font: 11px "Segoe UI", system-ui; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+.title { display: flex; justify-content: space-between; align-items: center; }
+ul { list-style: none; padding: 0; margin: 8px 0 0; max-height: 220px; overflow: auto; }
+li { display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto; column-gap: 8px;
+     padding: 6px 0; border-top: 1px solid var(--line); }
+li .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+li .meta { grid-row: 2; color: var(--muted); font-size: 11px; }
+li button { grid-row: 1 / span 2; grid-column: 2; align-self: center; }
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+button:hover { filter: brightness(1.08); }
+button.primary { background: var(--accent); color: #fff; border-color: transparent; margin-top: 8px; width: 100%; }
+@media (prefers-color-scheme: dark) { button.primary { color: #000; } }
+button.link { border: none; background: none; color: var(--accent); padding: 0; }
+details summary { cursor: pointer; font-weight: 600; }
+details label { display: block; margin-top: 8px; color: var(--muted); font-size: 12px; }
+details label.row { display: flex; color: var(--text); font-size: 13px; }
+textarea, input[type="text"], input[type="number"] {
+  width: 100%;
+  margin-top: 4px;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+footer { display: flex; align-items: center; gap: 10px; }
+#message { color: var(--muted); font-size: 12px; }

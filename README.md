@@ -7,7 +7,7 @@ and a Chrome/Edge extension.
 
 **Status:** early development. The download engine (parallel connections, dynamic splitting,
 crash-safe resume, retries, speed limits), queues and scheduler, HLS/DASH streams, the `lanes`
-command line and the Windows app work; video sites (yt-dlp) and the browser extension are still
+command line, the Windows app and the Chrome/Edge extension work; video sites (yt-dlp) are still
 to come.
 
 ## Windows app
@@ -21,6 +21,25 @@ and uses Mica on Windows 11. Paste a link with Ctrl+V or drop it on the window.
 While the app runs, `lanes` commands and the browser extension use its engine; a second
 `lanes-gui.exe <url>` hands the link to the running window. `lanes-gui.exe --tray` starts hidden
 in the notification area.
+
+## Browser extension (Chrome, Edge)
+
+The extension in [`extension/`](extension) hands browser downloads to Lanes (by file type, with
+the page's cookies, so logged-in downloads work), lists the videos and streams a page plays,
+puts a "Download with Lanes" button over videos, and adds "Download with Lanes" / "Download all
+links" to the right-click menu. Hold Alt while clicking to let the browser download instead,
+Insert to send anything to Lanes. If Lanes is not running, the extension starts it; if Lanes is
+not installed, downloads stay in the browser.
+
+Until the store versions exist, load it unpacked (development only):
+
+```powershell
+.\build\windows-debug\bin\lanes-bridge.exe --register   # once: lets Chrome and Edge start Lanes
+```
+
+Then open `chrome://extensions` (or `edge://extensions`), turn on Developer mode, choose
+**Load unpacked** and pick the `extension` folder. `lanes-bridge.exe --unregister` removes the
+registration.
 
 ## Command line
 

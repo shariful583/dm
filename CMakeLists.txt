@@ -38,6 +38,9 @@ endforeach()
 
 add_subdirectory(src/core)
 add_subdirectory(src/cli)
+if(WIN32)
+    add_subdirectory(src/bridge)
+endif()
 
 # GUI (Qt 6.8+ MSVC kit, from the Qt installer). Found through CMAKE_PREFIX_PATH / Qt6_DIR, or
 # the newest C:\Qt\6.*\msvc*_64 kit. Without Qt the GUI is skipped (CI builds core, CLI, tests).

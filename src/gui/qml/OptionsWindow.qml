@@ -81,6 +81,11 @@ ApplicationWindow {
                 onToggled: win.apply("gui/showComplete", checked)
             }
             CheckBox {
+                text: qsTr("Ask before downloading what the browser hands over (show the Add window)")
+                checked: App.settings["gui/confirmCaptured"] === true
+                onToggled: win.apply("gui/confirmCaptured", checked)
+            }
+            CheckBox {
                 text: qsTr("Notify when downloads finish or fail")
                 checked: App.settings["gui/notify"] === true
                 onToggled: win.apply("gui/notify", checked)

@@ -289,6 +289,10 @@ void EngineService::set_on_activate(std::function<void(std::vector<std::string>)
   on_activate_ = std::move(handler);
 }
 
+void EngineService::set_on_browser(std::function<Result<std::string>(std::string)> handler) {
+  on_browser_ = std::move(handler);
+}
+
 std::string EngineService::handle(std::string_view request) {
   const json j = json::parse(request, nullptr, false);
   if (j.is_discarded() || !j.is_object()) {
@@ -386,6 +390,24 @@ std::string EngineService::handle(std::string_view request) {
     }
     if (cmd == "set_setting") {
       return respond(engine_.set_setting(str(j, "key"), str(j, "value")));
+    }
+    if (cmd == "browser") {
+      if (!on_browser_) {
+        return failure({ErrorCode::Unsupported, "no Lanes window to answer the browser", 0});
+      }
+      const json &message = j.at("message");
+      if (!message.is_object()) {
+        return failure({ErrorCode::InvalidArgument, "browser message is not an object", 0});
+      }
+      auto reply = on_browser_(message.dump());
+      if (!reply) {
+        return failure(reply.error());
+      }
+      json parsed = json::parse(*reply, nullptr, false);
+      if (parsed.is_discarded()) {
+        return failure({ErrorCode::Unknown, "the Lanes window gave a malformed reply", 0});
+      }
+      return ok({{"reply", std::move(parsed)}});
     }
     if (cmd == "activate") {
       if (!on_activate_) {
@@ -630,6 +652,18 @@ Result<void> EngineClient::shutdown_engine() { return exchange_void(*this, {{"cm
 
 Result<void> EngineClient::activate(const std::vector<std::string> &args) {
   return exchange_void(*this, {{"cmd", "activate"}, {"args", args}});
+}
+
+Result<std::string> EngineClient::browser(const std::string &message) {
+  json parsed = json::parse(message, nullptr, false);
+  if (parsed.is_discarded() || !parsed.is_object()) {
+    return make_error(ErrorCode::InvalidArgument, "browser message is not a JSON object");
+  }
+  auto r = exchange(*this, {{"cmd", "browser"}, {"message", std::move(parsed)}});
+  if (!r) {
+    return make_error(r.error());
+  }
+  return r->value("reply", json::object()).dump();
 }
 
 Result<std::vector<category::Category>> EngineClient::categories() {

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include <optional>
+
+#include <QDateTime>
 #include <QObject>
 #include <QSettings>
 #include <QThreadPool>
@@ -20,8 +23,10 @@ namespace lanes::gui {
 // requests that open windows (tray, second launch, notifications). Methods that can fail return
 // an error message, "" on success. GUI thread only; probes run on a worker pool.
 //
-// GUI-only preferences live in QSettings (HKCU\Software\Lanes\Lanes) under "gui/":
-// gui/minimizeToTray, gui/showProgress, gui/showComplete, gui/notify (all default true).
+// GUI-only preferences live in QSettings (HKCU\Software\<organization>\<application>: Lanes\Lanes;
+// tests set their own names) under "gui/":
+// gui/minimizeToTray, gui/showProgress, gui/showComplete, gui/notify, gui/confirmCaptured (show
+// the Add window for downloads the browser hands over; all default true).
 class AppController : public QObject {
   Q_OBJECT
   QML_NAMED_ELEMENT(App)
@@ -97,6 +102,18 @@ public:
                                 const QString &password);
   Q_INVOKABLE QString removeLogin(const QString &host);
 
+  // --- browser extension ---
+  // Answers a message the bridge validated (JSON): ping, open, capture_download (opens the Add
+  // window with the browser's cookies, referrer, user agent and POST body, or continues a
+  // download waiting for a new address), capture_media (Add window with the links), video_page
+  // (not supported until yt-dlp is in). Returns the reply JSON: {"result": "accepted" |
+  // "rejected" | "error", "message"}.
+  Q_INVOKABLE QString handleBrowserMessage(const QString &message);
+  // IDM's automatic "Refresh download address": opens the download's page in the browser; the
+  // next captured download with the same file name (and size, if known) within 10 minutes
+  // continues this download instead of starting a new one. Returns an error message or "".
+  Q_INVOKABLE QString startAutoRefresh(qint64 id);
+
   // --- formatting (same units as the CLI) ---
   Q_INVOKABLE QString formatBytes(double bytes) const;
   Q_INVOKABLE QString formatSpeed(double bytesPerSecond) const;
@@ -106,7 +123,10 @@ public:
 
   // Asks the UI to open windows (tray menu, second launch, notification clicks).
   Q_INVOKABLE void requestMainWindow() { emit showMainWindow(); }
-  Q_INVOKABLE void requestAdd(const QStringList &urls) { emit addUrlsRequested(urls); }
+  // `request`: fields for the Add window (referer, cookies, userAgent, method, body, fileName).
+  Q_INVOKABLE void requestAdd(const QStringList &urls, const QVariantMap &request = {}) {
+    emit addUrlsRequested(urls, request);
+  }
   Q_INVOKABLE void requestProgress(qint64 id) { emit progressWindowRequested(id); }
   Q_INVOKABLE void quit() { emit quitRequested(); }
 
@@ -116,7 +136,7 @@ signals:
   void queuesChanged();
   void settingsChanged();
   void showMainWindow();
-  void addUrlsRequested(const QStringList &urls);
+  void addUrlsRequested(const QStringList &urls, const QVariantMap &request);
   void progressWindowRequested(qint64 id);
   void quitRequested();
 
@@ -126,6 +146,14 @@ private:
   DownloadFilterModel filter_;
   QThreadPool pool_; // probes
   mutable QSettings prefs_;
+
+  struct PendingRefresh {
+    qint64 id = 0;
+    QString filename;
+    double size = -1; // -1 = unknown
+    QDateTime deadline;
+  };
+  std::optional<PendingRefresh> pending_refresh_;
 };
 
 } // namespace lanes::gui

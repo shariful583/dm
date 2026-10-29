@@ -42,8 +42,9 @@ ApplicationWindow {
         root.raise()
         root.requestActivate()
     }
-    function openAdd(urls) {
-        const w = addComponent.createObject(null, { initialText: (urls || []).join("\n") })
+    function openAdd(urls, request) {
+        const w = addComponent.createObject(null, { initialText: (urls || []).join("\n"),
+                                                    initialRequest: request || {} })
         w.closing.connect(() => w.destroy())
         w.show()
         w.raise()
@@ -133,7 +134,7 @@ ApplicationWindow {
     Connections {
         target: App
         function onShowMainWindow() { root.bringUp() }
-        function onAddUrlsRequested(urls) { root.openAdd(urls) }
+        function onAddUrlsRequested(urls, request) { root.openAdd(urls, request) }
         function onProgressWindowRequested(id) { root.openProgress(id) }
     }
     // Keep the selection to rows that still exist.
@@ -594,6 +595,22 @@ ApplicationWindow {
                 id: newUrl
                 placeholderText: "https://"
                 Layout.fillWidth: true
+            }
+            Label {
+                text: qsTr("Or let the browser find it: Lanes opens the page the download came from. Start the same download there and Lanes continues this one (needs the Lanes browser extension).")
+                wrapMode: Text.Wrap
+                color: palette.placeholderText
+                Layout.fillWidth: true
+                Layout.topMargin: 8
+            }
+            Button {
+                text: qsTr("Open the page in the browser")
+                onClicked: {
+                    const e = App.startAutoRefresh(refresh.downloadId)
+                    refresh.close()
+                    if (e.length > 0)
+                        root.showMessage(qsTr("Refresh download address"), e)
+                }
             }
         }
     }

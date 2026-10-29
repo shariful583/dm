@@ -49,7 +49,8 @@ struct NewDownload {
 struct DownloadInfo {
   DownloadId id = 0;
   std::string url;
-  std::string filename;            // the server's / given name; a guess from the URL until known
+  std::string referer;  // the page the download came from (for refreshing an expired address)
+  std::string filename; // the server's / given name; a guess from the URL until known
   std::filesystem::path directory; // empty until known when the file's category picks it
   std::string category;            // "Video", ..., or "General"
   std::string queue;

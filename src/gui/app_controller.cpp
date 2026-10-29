@@ -3,11 +3,16 @@
 
 #include <QClipboard>
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QDir>
 #include <QFile>
 #include <QFontDatabase>
 #include <QGuiApplication>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QQmlEngine>
+#include <QUrl>
 
 #include "core/batch/batch.hpp"
 #include "core/category/category.hpp"
@@ -51,6 +56,10 @@ core::net::RequestOptions request_from(const QString &url, const QVariantMap &m)
   r.referer = utf8(m.value("referer").toString().trimmed());
   r.cookies = utf8(m.value("cookies").toString().trimmed());
   r.user_agent = utf8(m.value("userAgent").toString().trimmed());
+  if (m.value("method").toString() == QStringLiteral("POST")) { // captured from the browser
+    r.method = "POST";
+    r.body = utf8(m.value("body").toString());
+  }
   const QString user = m.value("username").toString();
   if (!user.isEmpty()) {
     r.auth = core::net::Credentials{utf8(user), utf8(m.value("password").toString())};
@@ -68,7 +77,7 @@ core::net::RequestOptions request_from(const QString &url, const QVariantMap &m)
 
 AppController::AppController(core::Engine &engine, QObject *parent)
     : QObject(parent), engine_(engine), model_(engine), filter_(&model_),
-      prefs_(QStringLiteral("Lanes"), QStringLiteral("Lanes")) {
+      prefs_() /* organization + application name: "Lanes" (tests use their own) */ {
   pool_.setMaxThreadCount(4);
 }
 
@@ -122,8 +131,8 @@ QVariantMap AppController::settings() const {
     out[qstr(key)] = qstr(value);
   }
   out["download_dir"] = QDir::toNativeSeparators(out.value("download_dir").toString());
-  for (const char *key :
-       {"gui/minimizeToTray", "gui/showProgress", "gui/showComplete", "gui/notify"}) {
+  for (const char *key : {"gui/minimizeToTray", "gui/showProgress", "gui/showComplete",
+                          "gui/notify", "gui/confirmCaptured"}) {
     out[QString::fromLatin1(key)] = prefs_.value(QString::fromLatin1(key), true).toBool();
   }
   return out;
@@ -468,6 +477,101 @@ QString AppController::saveLogin(const QString &host, const QString &username,
 
 QString AppController::removeLogin(const QString &host) {
   return status(core::platform::delete_login(utf8(host)));
+}
+
+// --- browser extension ---
+
+QString AppController::handleBrowserMessage(const QString &message) {
+  const auto answer = [](const char *result, const QString &text = {}) {
+    QJsonObject r{{"result", QString::fromLatin1(result)}};
+    if (!text.isEmpty()) {
+      r["message"] = text;
+    }
+    return QString::fromUtf8(QJsonDocument(r).toJson(QJsonDocument::Compact));
+  };
+  const QJsonObject m = QJsonDocument::fromJson(message.toUtf8()).object();
+  const QString type = m.value("type").toString();
+  if (type == QStringLiteral("ping")) {
+    return answer("accepted", version());
+  }
+  if (type == QStringLiteral("open")) {
+    emit showMainWindow();
+    return answer("accepted");
+  }
+  if (type == QStringLiteral("video_page")) {
+    return answer("rejected", tr("Downloading from video sites needs yt-dlp, which this version "
+                                 "of Lanes does not include yet."));
+  }
+
+  // The page a download came from is its referrer (also what "refresh address" reopens).
+  QVariantMap request{
+      {"referer", m.value("referrer").toString().isEmpty() ? m.value("pageUrl").toString()
+                                                           : m.value("referrer").toString()},
+      {"cookies", m.value("cookies").toString()},
+      {"userAgent", m.value("userAgent").toString()},
+  };
+
+  if (type == QStringLiteral("capture_download")) {
+    const QString url = m.value("url").toString();
+    // Chrome may report a full path; only the name matters.
+    QString name = m.value("filename").toString();
+    name = name.mid(std::max(name.lastIndexOf('\\'), name.lastIndexOf('/')) + 1);
+    const double size = m.value("fileSize").toDouble(-1);
+
+    if (pending_refresh_ && QDateTime::currentDateTime() < pending_refresh_->deadline &&
+        !name.isEmpty() && name.compare(pending_refresh_->filename, Qt::CaseInsensitive) == 0 &&
+        (pending_refresh_->size < 0 || size < 0 || size == pending_refresh_->size)) {
+      const qint64 id = pending_refresh_->id;
+      pending_refresh_.reset();
+      const QString error = resume(id, url);
+      return error.isEmpty()
+                 ? answer("accepted", tr("Continuing %1 from the new address").arg(name))
+                 : answer("error", error);
+    }
+
+    request["fileName"] = name;
+    if (m.value("method").toString() == QStringLiteral("POST")) {
+      request["method"] = QStringLiteral("POST");
+      request["body"] = m.value("body").toString();
+    }
+    if (prefs_.value(QStringLiteral("gui/confirmCaptured"), true).toBool()) {
+      emit addUrlsRequested({url}, request);
+      return answer("accepted");
+    }
+    QVariantMap d = request;
+    d["url"] = url;
+    d["ifDuplicate"] = QStringLiteral("rename");
+    const QVariantMap added = add(d);
+    return added.value("ok").toBool() ? answer("accepted")
+                                      : answer("error", added.value("error").toString());
+  }
+
+  if (type == QStringLiteral("capture_media")) {
+    QStringList urls;
+    for (const QJsonValue &item : m.value("items").toArray()) {
+      urls << item.toObject().value("url").toString();
+    }
+    emit addUrlsRequested(urls, request);
+    return answer("accepted");
+  }
+  return answer("error", tr("Unknown message"));
+}
+
+QString AppController::startAutoRefresh(qint64 id) {
+  const auto info = engine_.get(id);
+  if (!info) {
+    return tr("This download is no longer in the list.");
+  }
+  if (info->referer.empty() || !isUrl(qstr(info->referer))) {
+    return tr("Lanes does not know the page this download came from. Paste a new link instead.");
+  }
+  if (!QDesktopServices::openUrl(QUrl(qstr(info->referer)))) {
+    return tr("The browser could not be opened.");
+  }
+  pending_refresh_ =
+      PendingRefresh{id, qstr(info->filename), info->size ? static_cast<double>(*info->size) : -1.0,
+                     QDateTime::currentDateTime().addSecs(10 * 60)};
+  return {};
 }
 
 // --- formatting ---

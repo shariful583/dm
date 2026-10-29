@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Draws the Lanes icon (three lanes flowing into a down arrow) and writes src\gui\resources\
-# lanes.ico with PNG frames at the sizes Windows asks for. Run it again after changing the
-# drawing:   powershell -File tools\make-icon.ps1
+# lanes.ico with PNG frames at the sizes Windows asks for, plus the browser extension's PNG icons.
+# Run it again after changing the drawing:
+#   powershell -ExecutionPolicy Bypass -File tools\make-icon.ps1
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
@@ -80,3 +81,11 @@ for ($i = 0; $i -lt $sizes.Count; $i++) {
 foreach ($f in $frames) { $w.Write($f) }
 $w.Dispose()
 Write-Host "wrote $out ($((Get-Item $out).Length) bytes)"
+
+# The browser extension's icons (toolbar, extensions page, store).
+$extIcons = Join-Path $root 'extension\icons'
+New-Item -ItemType Directory -Force $extIcons | Out-Null
+foreach ($size in @(16, 32, 48, 128)) {
+    [System.IO.File]::WriteAllBytes((Join-Path $extIcons "icon$size.png"), (New-IconPng $size))
+}
+Write-Host "wrote $extIcons\icon{16,32,48,128}.png"

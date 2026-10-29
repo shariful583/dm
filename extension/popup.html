@@ -1,0 +1,55 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Lanes</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="icons/icon32.png" alt="" width="20" height="20">
+    <h1>Lanes</h1>
+    <span id="status" class="status">Checking…</span>
+  </header>
+
+  <section>
+    <label class="row">
+      <input type="checkbox" id="enabled">
+      <span>Send downloads to Lanes</span>
+    </label>
+    <p class="hint">Hold <kbd>Alt</kbd> while clicking to let the browser download; hold <kbd>Insert</kbd> to send anything to Lanes.</p>
+  </section>
+
+  <section>
+    <div class="title">
+      <h2>Media on this page</h2>
+      <button id="video" class="link">Download video</button>
+    </div>
+    <ul id="media"></ul>
+    <p id="no-media" class="hint">Nothing detected yet. Start playing the video.</p>
+    <button id="send-all" class="primary" hidden>Send all to Lanes</button>
+  </section>
+
+  <details>
+    <summary>Settings</summary>
+    <label>File types to send to Lanes
+      <textarea id="extensions" rows="3"></textarea>
+    </label>
+    <label class="row"><input type="checkbox" id="captureAll"> <span>Send every download, whatever its type</span></label>
+    <label>Smallest file to send (KiB)
+      <input type="number" id="minSizeKiB" min="0">
+    </label>
+    <label>Sites that keep their downloads (e.g. example.com, *.intranet.local)
+      <input type="text" id="excludedSites">
+    </label>
+    <label class="row"><input type="checkbox" id="videoButton"> <span>Show “Download with Lanes” over videos</span></label>
+  </details>
+
+  <footer>
+    <button id="open">Open Lanes</button>
+    <span id="message"></span>
+  </footer>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

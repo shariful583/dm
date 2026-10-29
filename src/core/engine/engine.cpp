@@ -212,6 +212,7 @@ struct Engine::Impl {
     info.error = r.error;
     info.connections = r.connections;
     info.speed_limit = r.speed_limit;
+    info.referer = r.referer;
     info.added_at = r.added_at;
     info.completed_at = r.completed_at;
     if (const auto it = live.find(r.id); it != live.end()) {

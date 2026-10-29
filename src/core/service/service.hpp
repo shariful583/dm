@@ -31,6 +31,10 @@ public:
   // command-line arguments, e.g. URLs). Without a handler "activate" answers Unsupported.
   // Set before serving.
   void set_on_activate(std::function<void(std::vector<std::string> args)> handler);
+  // The GUI answers messages from the browser extension, which the bridge has validated
+  // ("browser" requests): message JSON in, reply JSON out. Without a handler
+  // "browser" answers Unsupported. Called on the client's thread. Set before serving.
+  void set_on_browser(std::function<Result<std::string>(std::string message)> handler);
   // Never throws; malformed requests get an error response.
   std::string handle(std::string_view request);
 
@@ -38,6 +42,7 @@ private:
   Engine &engine_;
   std::function<void()> request_shutdown_;
   std::function<void(std::vector<std::string>)> on_activate_;
+  std::function<Result<std::string>(std::string)> on_browser_;
 };
 
 // Serves `service` until `stop`, one thread per connected client; calls `on_request` for each
@@ -81,6 +86,9 @@ public:
   // Asks the GUI owning the engine to show its window and handle `args`. Unsupported when the
   // owner is the windowless `lanes engine`.
   Result<void> activate(const std::vector<std::string> &args);
+  // Passes a validated browser message (JSON) to the GUI; returns its reply (JSON). Unsupported
+  // when the owner is the windowless `lanes engine`.
+  Result<std::string> browser(const std::string &message);
 
   // Raw request/response (JSON text), for tools and tests.
   Result<std::string> call(const std::string &request);

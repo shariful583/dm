@@ -30,15 +30,20 @@ ApplicationWindow {
     readonly property bool batch: urls.length > 1
     readonly property bool single: urls.length === 1 && App.isUrl(urls[0])
 
+    // From the browser extension: referer, cookies, userAgent, fileName, method + body (POST).
+    property var initialRequest: ({})
+    readonly property bool fromBrowser: (initialRequest.cookies || initialRequest.referer || "").length > 0
+
     function requestFields() {
         return {
             referer: referer.text, cookies: cookies.text, userAgent: userAgent.text,
-            username: username.text, password: password.text, headers: headers.text
+            username: username.text, password: password.text, headers: headers.text,
+            method: initialRequest.method || "GET", body: initialRequest.body || ""
         }
     }
 
     function startProbe() {
-        if (!single) {
+        if (!single || initialRequest.method === "POST") { // a form's reply cannot be checked first
             probe = null
             probing = false
             return
@@ -97,9 +102,21 @@ ApplicationWindow {
             if (App.isUrl(clip.split("\n")[0].trim()))
                 text = clip
         }
+        referer.text = initialRequest.referer || ""
+        cookies.text = initialRequest.cookies || ""
+        userAgent.text = initialRequest.userAgent || ""
+        if ((initialRequest.fileName || "").length > 0) {
+            fileName.text = initialRequest.fileName
+            nameEdited = true
+            folder.text = App.folderFor(fileName.text)
+        }
         urlField.text = text
         urlField.forceActiveFocus()
         urlField.selectAll()
+        if (fromBrowser) {
+            raise()
+            requestActivate()
+        }
     }
 
     Connections {
@@ -179,6 +196,8 @@ ApplicationWindow {
                         return qsTr("%n links will be added.", "", win.urls.length)
                     if (win.urls.length === 1 && !win.single)
                         return qsTr("Only http, https, ftp and ftps links can be downloaded.")
+                    if (win.initialRequest.method === "POST")
+                        return qsTr("Sent by a form on the page; the size is known once it starts.")
                     if (win.probing)
                         return qsTr("Checking the link…")
                     if (!win.probe)

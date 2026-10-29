@@ -8,6 +8,8 @@
 
 #include <array>
 #include <chrono>
+#include <future>
+#include <memory>
 #include <thread>
 
 #include <QGuiApplication>
@@ -265,6 +267,22 @@ int main(int argc, char *argv[]) {
           }
         },
         Qt::QueuedConnection);
+  });
+  // Browser messages (from lanes-bridge) are answered on the GUI thread. The pipe thread waits a
+  // few seconds at most, so shutting down never deadlocks on it.
+  service.set_on_browser([&controller](std::string message) -> core::Result<std::string> {
+    auto reply = std::make_shared<std::promise<QString>>();
+    auto answered = reply->get_future();
+    QMetaObject::invokeMethod(
+        &controller,
+        [&controller, reply, text = QString::fromStdString(message)] {
+          reply->set_value(controller.handleBrowserMessage(text));
+        },
+        Qt::QueuedConnection);
+    if (answered.wait_for(5s) != std::future_status::ready) {
+      return core::make_error(core::ErrorCode::Timeout, "the Lanes window did not answer");
+    }
+    return answered.get().toStdString();
   });
   std::jthread serving([&server, &service](std::stop_token stop) {
     core::service::serve(std::move(server), service, stop);

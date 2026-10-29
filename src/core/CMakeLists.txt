@@ -47,6 +47,7 @@ if(WIN32)
         platform/ipc_win.cpp
         platform/process_win.cpp
         platform/proxy_win.cpp
+        platform/registry_win.cpp
         platform/system_win.cpp
         platform/win/win32.cpp)
 endif()
