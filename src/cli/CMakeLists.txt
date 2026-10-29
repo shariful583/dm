@@ -18,3 +18,5 @@ add_executable(lanes_cli main.cpp)
 set_target_properties(lanes_cli PROPERTIES OUTPUT_NAME lanes)
 target_link_libraries(lanes_cli PRIVATE lanes_cli_lib CLI11::CLI11)
 lanes_set_compiler_options(lanes_cli)
+
+install(TARGETS lanes_cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT app)

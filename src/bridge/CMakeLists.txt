@@ -19,3 +19,5 @@ set_target_properties(lanes_bridge PROPERTIES OUTPUT_NAME lanes-bridge)
 target_compile_definitions(lanes_bridge PRIVATE LANES_EXTENSION_IDS="${LANES_EXTENSION_IDS}")
 target_link_libraries(lanes_bridge PRIVATE lanes_bridge_lib)
 lanes_set_compiler_options(lanes_bridge)
+
+install(TARGETS lanes_bridge RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT app)

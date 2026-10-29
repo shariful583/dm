@@ -79,3 +79,14 @@ if(WIN32)
         COMMENT "windeployqt lanes-gui"
         VERBATIM)
 endif()
+
+# Install: the program plus the Qt runtime it needs (Qt's deploy script runs windeployqt on the
+# installed copy; the MSVC runtime comes from the root CMakeLists).
+install(TARGETS lanes_gui RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT app)
+qt_generate_deploy_qml_app_script(
+    TARGET lanes_gui
+    OUTPUT_SCRIPT lanes_gui_deploy
+    NO_TRANSLATIONS
+    NO_COMPILER_RUNTIME
+    DEPLOY_TOOL_OPTIONS --no-system-d3d-compiler --no-opengl-sw --no-system-dxc-compiler --no-ffmpeg)
+install(SCRIPT ${lanes_gui_deploy} COMPONENT app)

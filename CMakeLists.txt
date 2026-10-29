@@ -36,6 +36,11 @@ foreach(program ffmpeg.exe yt-dlp.exe deno.exe)
     endif()
 endforeach()
 
+# `cmake --install` lays out the installed program flat (all executables in one folder, as Lanes
+# expects: it finds ffmpeg, yt-dlp, deno, lanes-gui and lanes-bridge next to itself). The
+# installer (installer/lanes.iss, tools/make-installer.ps1) packs that folder.
+set(CMAKE_INSTALL_BINDIR ".") # a normal variable: wins over GNUInstallDirs' cached "bin"
+
 add_subdirectory(src/core)
 add_subdirectory(src/cli)
 if(WIN32)
@@ -43,9 +48,13 @@ if(WIN32)
 endif()
 
 # GUI (Qt 6.8+ MSVC kit, from the Qt installer). Found through CMAKE_PREFIX_PATH / Qt6_DIR, or
-# the newest C:\Qt\6.*\msvc*_64 kit. Without Qt the GUI is skipped (CI builds core, CLI, tests).
+# the newest C:\Qt\6.*\msvc*_64 kit. Without Qt the GUI is skipped: the CI workflow builds core,
+# CLI and tests; the release workflow installs Qt and builds everything.
 option(LANES_BUILD_GUI "Build the Qt GUI (lanes-gui.exe) when Qt is found" ON)
 if(LANES_BUILD_GUI)
+    if(DEFINED ENV{QT_ROOT_DIR}) # set by aqtinstall / install-qt-action (CI)
+        list(APPEND CMAKE_PREFIX_PATH $ENV{QT_ROOT_DIR})
+    endif()
     if(WIN32 AND NOT Qt6_DIR)
         file(GLOB qt_kits LIST_DIRECTORIES true "C:/Qt/6.*/msvc*_64")
         list(SORT qt_kits COMPARE NATURAL ORDER DESCENDING)
@@ -59,6 +68,32 @@ if(LANES_BUILD_GUI)
         message(STATUS "Qt 6.8+ (MSVC kit) not found: lanes-gui is skipped")
     endif()
 endif()
+
+# --- install (packaging) ---
+# Component "app": Lanes itself; "tools": the bundled third-party programs (large).
+install(FILES LICENSE THIRD_PARTY_NOTICES.md README.md DESTINATION . COMPONENT app)
+install(DIRECTORY extension/ DESTINATION extension COMPONENT app)
+# License texts of everything shipped: the bundled programs' (licenses/) and those of the
+# libraries compiled into Lanes (vcpkg's copyright file per port).
+install(DIRECTORY licenses/ DESTINATION licenses COMPONENT app)
+if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+    foreach(port cli11 curl nlohmann-json openssl pugixml sqlite3 tl-expected zlib)
+        set(copyright ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${port}/copyright)
+        if(EXISTS ${copyright})
+            install(FILES ${copyright} DESTINATION licenses RENAME ${port}.txt COMPONENT app)
+        endif()
+    endforeach()
+endif()
+foreach(program ffmpeg.exe yt-dlp.exe deno.exe)
+    if(EXISTS ${PROJECT_SOURCE_DIR}/third_party/bin/${program})
+        install(PROGRAMS ${PROJECT_SOURCE_DIR}/third_party/bin/${program} DESTINATION .
+                COMPONENT tools)
+    endif()
+endforeach()
+# The MSVC runtime next to the programs (redistributable), so no VC++ installer is needed.
+set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION .)
+set(CMAKE_INSTALL_SYSTEM_RUNTIME_COMPONENT app)
+include(InstallRequiredSystemLibraries)
 
 if(LANES_BUILD_TESTS)
     enable_testing()

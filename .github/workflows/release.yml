@@ -1,0 +1,93 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Windows installer: on a version tag (v0.1.0) or by hand. Signs only when
+# the signing secrets exist; without them it produces an unsigned installer and
+# still passes:
+#   LANES_SIGN_PFX_BASE64  the code-signing certificate (.pfx), base64
+#   LANES_SIGN_PASSWORD    its password
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    name: Windows installer
+    runs-on: windows-latest
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}\vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
+      HAS_CERT: ${{ secrets.LANES_SIGN_PFX_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read vcpkg baseline
+        id: baseline
+        shell: pwsh
+        run: |
+          $baseline = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
+          "commit=$baseline" >> $env:GITHUB_OUTPUT
+
+      - name: Set up vcpkg
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg "$env:VCPKG_ROOT"
+          git -C "$env:VCPKG_ROOT" checkout ${{ steps.baseline.outputs.commit }}
+          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+          New-Item -ItemType Directory -Force "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
+
+      - name: Cache vcpkg binaries
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ runner.os }}-windows-release-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-windows-release-
+
+      # Qt under the LGPL through aqtinstall, the same MSVC kit as development.
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.12.0'
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Set up MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Fetch third-party programs (pinned, SHA-256 checked)
+        shell: pwsh
+        run: ./tools/fetch-third-party.ps1
+
+      - name: Prepare signing
+        if: ${{ env.HAS_CERT == 'true' }}
+        shell: pwsh
+        env:
+          PFX: ${{ secrets.LANES_SIGN_PFX_BASE64 }}
+          PASSWORD: ${{ secrets.LANES_SIGN_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'lanes-sign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX))
+          "LANES_SIGN_ARGS=/fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f `"$pfx`" /p `"$env:PASSWORD`"" >> $env:GITHUB_ENV
+
+      - name: Build the installer
+        shell: pwsh
+        run: ./tools/make-installer.ps1 -Iscc "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+
+      - name: Test the release build
+        run: ctest --preset windows-release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lanes-setup
+          path: build/installer/*.exe

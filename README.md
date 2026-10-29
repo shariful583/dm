@@ -114,6 +114,20 @@ the free LGPL version is enough). CMake finds a kit under `C:\Qt` by itself; oth
 copies the Qt files next to `lanes-gui.exe`, so `.\build\windows-debug\bin\lanes-gui.exe` runs as
 is.
 
+### Installer
+
+With [Inno Setup 6](https://jrsoftware.org/isinfo.php) installed:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\make-installer.ps1
+```
+
+builds `build\installer\lanes-setup-<version>.exe`: a per-user install (no administrator rights;
+"for all users" is offered) with the app, the command line, the browser bridge, yt-dlp, Deno,
+ffmpeg and all license texts. It can start Lanes with Windows and connects Chrome and Edge.
+Set `LANES_SIGN_ARGS` (signtool arguments) to sign it. The **Release** GitHub workflow builds the
+same installer for version tags.
+
 ## License
 
 GPL-3.0-or-later. See [`LICENSE`](LICENSE) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
