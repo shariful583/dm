@@ -5,6 +5,7 @@ find_package(CLI11 CONFIG REQUIRED)
 # Command implementations and formatting, separate from main() so tests can use them.
 add_library(lanes_cli_lib STATIC
     commands.cpp
+    queue.cpp
     format.cpp)
 target_include_directories(lanes_cli_lib PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(lanes_cli_lib PUBLIC lanes::core)

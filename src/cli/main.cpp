@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <iostream>
 #include <string>
+#include <vector>
 
 #include <CLI/CLI.hpp>
 
@@ -51,6 +52,56 @@ int main(int argc, char **argv) {
   auto *info_cmd = app.add_subcommand("info", "Show what the server says about a download");
   add_request_options(*info_cmd, info);
 
+  // --- through the background engine ---
+  cli::AddArgs add;
+  auto *add_cmd = app.add_subcommand("add", "Add a download to the background engine");
+  add_request_options(*add_cmd, add.request);
+  add_cmd->add_option("-o,--output", add.output, "Folder (or folder\\file name) to save into");
+  add_cmd->add_option("--queue", add.queue, "Wait in this queue instead of starting now");
+  add_cmd->add_option("--at", add.at, "Start at local time \"YYYY-MM-DD HH:MM\"");
+  add_cmd->add_option("-c,--connections", add.connections, "Parallel connections, 1-32")
+      ->check(CLI::Range(1, 32));
+  add_cmd->add_option("--limit", add.limit, "Speed limit for this download, e.g. 2M");
+  add_cmd->add_option("-d,--data", add.request.data, "POST this body instead of GET");
+  add_cmd->add_option("--sha256", add.sha256, "Verify the SHA-256 of the finished file");
+  add_cmd->add_option("--md5", add.md5, "Verify the MD5 of the finished file");
+
+  std::string list_queue;
+  auto *list_cmd = app.add_subcommand("list", "Show downloads");
+  list_cmd->add_option("--queue", list_queue, "Only this queue");
+
+  std::string pause_target;
+  auto *pause_cmd = app.add_subcommand("pause", "Pause a download (or all)");
+  pause_cmd->add_option("id", pause_target, "Download id, or \"all\"")->required();
+
+  std::string resume_target;
+  std::string resume_url;
+  auto *resume_cmd = app.add_subcommand("resume", "Resume a download (or all)");
+  resume_cmd->add_option("id", resume_target, "Download id, or \"all\"")->required();
+  resume_cmd->add_option("--url", resume_url, "New address for an expired link");
+
+  std::string remove_target;
+  bool remove_delete = false;
+  auto *remove_cmd = app.add_subcommand("remove", "Remove a download from the list");
+  remove_cmd->add_option("id", remove_target, "Download id")->required();
+  remove_cmd->add_flag("--delete-file", remove_delete, "Also delete the file (or partial file)");
+
+  cli::RunArgs run;
+  auto *run_cmd = app.add_subcommand("run", "Process a queue and show its progress");
+  run_cmd->add_option("--queue", run.queue, "Queue name")->capture_default_str();
+  run_cmd->add_option("--max", run.max, "Downloads at once")->check(CLI::Range(1, 32));
+  run_cmd->add_option("--until", run.until, "Stop the queue at this time, HH:MM");
+
+  std::vector<std::string> config_args;
+  auto *config_cmd = app.add_subcommand(
+      "config", "Show or change settings: download_dir, connections, max_active, speed_limit");
+  config_cmd->add_option("key_value", config_args, "[key [value]]")->expected(0, 2);
+
+  bool engine_stop = false;
+  auto *engine_cmd = app.add_subcommand("engine", "Run the background engine (started on demand)");
+  engine_cmd->add_flag("--stop", engine_stop, "Stop the running engine");
+  engine_cmd->group(""); // hidden from help
+
   try {
     app.parse(argc, argv);
   } catch (const CLI::ParseError &e) {
@@ -63,6 +114,30 @@ int main(int argc, char **argv) {
   }
   if (info_cmd->parsed()) {
     return cli::run_info(info);
+  }
+  if (add_cmd->parsed()) {
+    return cli::run_add(add);
+  }
+  if (list_cmd->parsed()) {
+    return cli::run_list(list_queue);
+  }
+  if (pause_cmd->parsed()) {
+    return cli::run_pause(pause_target);
+  }
+  if (resume_cmd->parsed()) {
+    return cli::run_resume(resume_target, resume_url);
+  }
+  if (remove_cmd->parsed()) {
+    return cli::run_remove(remove_target, remove_delete);
+  }
+  if (run_cmd->parsed()) {
+    return cli::run_queue(run);
+  }
+  if (config_cmd->parsed()) {
+    return cli::run_config(config_args);
+  }
+  if (engine_cmd->parsed()) {
+    return cli::run_engine(engine_stop);
   }
   std::cout << app.help();
   return cli::kExitOk;

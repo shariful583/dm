@@ -10,7 +10,8 @@ components. Every dependency must be GPLv3-compatible and listed here before it 
 | CLI11 | CLI argument parsing | BSD-3-Clause | https://github.com/CLIUtils/CLI11 |
 | libcurl | HTTP/FTP transfers (Schannel TLS, WinIDN on Windows) | curl license (MIT-style) | https://curl.se |
 | tl-expected | `Result` type in core | CC0-1.0 | https://github.com/TartanLlama/expected |
-| nlohmann/json | Resume sidecar files (JSON) | MIT | https://github.com/nlohmann/json |
+| nlohmann/json | Resume sidecar files, engine pipe protocol (JSON) | MIT | https://github.com/nlohmann/json |
+| SQLite | Downloads, queues, settings database | Public domain | https://sqlite.org |
 | OpenSSL 3 | Hashing, HMAC, AES-128 (test server now; core later) | Apache-2.0 | https://www.openssl.org |
 | Catch2 v3 | Unit tests (not shipped) | BSL-1.0 | https://github.com/catchorg/Catch2 |
 | cpp-httplib | Local test HTTP server (not shipped) | MIT | https://github.com/yhirose/cpp-httplib |
@@ -19,7 +20,6 @@ components. Every dependency must be GPLv3-compatible and listed here before it 
 
 | Component | Used for | License | Project |
 |---|---|---|---|
-| SQLite | Queue, history, settings | Public domain | https://sqlite.org |
 | spdlog | Logging | MIT | https://github.com/gabime/spdlog |
 | Qt 6 | GUI (dynamically linked) | LGPL-3.0 | https://www.qt.io |
 | yt-dlp | Video extraction (bundled binary) | Unlicense | https://github.com/yt-dlp/yt-dlp |

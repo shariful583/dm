@@ -88,6 +88,8 @@ struct DownloadOptions {
 
   // Called on the download thread at most every `progress_interval`, and once at the end.
   std::function<void(const DownloadProgress &)> on_progress;
+  // Called on the download thread once the final file path is decided (before data arrives).
+  std::function<void(const std::filesystem::path &final_path)> on_target;
   std::chrono::milliseconds progress_interval{250};
 };
 

@@ -202,7 +202,10 @@ Result<Process> Process::start(ProcessOptions options) {
     return make_error(win::last_error("create job object"));
   }
   JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-  limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+  // BREAKAWAY_OK: only processes that explicitly ask (the detached Lanes engine) may leave;
+  // helpers such as yt-dlp and ffmpeg stay in the job and die with it.
+  limits.BasicLimitInformation.LimitFlags =
+      JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
   if (!::SetInformationJobObject(job.get(), JobObjectExtendedLimitInformation, &limits,
                                  sizeof(limits))) {
     return make_error(win::last_error("configure job object"));

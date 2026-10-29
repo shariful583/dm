@@ -383,6 +383,9 @@ void Downloader::set_paths(const std::string &name) {
   part_path_ = final_path_;
   part_path_ += ".part";
   sidecar_path_ = resume::sidecar_path(final_path_);
+  if (options_.on_target) {
+    options_.on_target(final_path_);
+  }
 }
 
 // New .part file: folder, space check, sized up front (sparse where supported).
