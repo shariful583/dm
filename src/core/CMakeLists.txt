@@ -51,6 +51,7 @@ if(WIN32)
         platform/ipc_win.cpp
         platform/process_win.cpp
         platform/proxy_win.cpp
+        platform/power_win.cpp
         platform/registry_win.cpp
         platform/system_win.cpp
         platform/win/win32.cpp)
@@ -68,6 +69,6 @@ target_link_libraries(lanes_core
         pugixml::pugixml
         unofficial::sqlite3::sqlite3)
 if(WIN32)
-    target_link_libraries(lanes_core PRIVATE shell32 ole32 advapi32 winhttp)
+    target_link_libraries(lanes_core PRIVATE shell32 ole32 advapi32 winhttp powrprof)
 endif()
 lanes_set_compiler_options(lanes_core)

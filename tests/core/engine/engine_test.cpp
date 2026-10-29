@@ -290,3 +290,22 @@ TEST_CASE("the system proxy setting is validated", "[engine][queue]") {
   const auto id = *f.engine->add(f.download("/a.bin")); // direct either way: loopback
   REQUIRE(f.wait_for(id, DownloadState::Completed));
 }
+
+TEST_CASE("the engine keeps the computer awake while it downloads", "[engine][queue]") {
+  Fixture f;
+  CHECK_FALSE(f.engine->keeping_awake());
+  const auto id = *f.engine->add(f.download("/a.bin?rate=1048576")); // about 2 s
+  REQUIRE(f.wait_for(id, DownloadState::Running));
+  const auto deadline = Clock::now() + 2s;
+  while (!f.engine->keeping_awake() && Clock::now() < deadline) {
+    std::this_thread::sleep_for(10ms);
+  }
+  CHECK(f.engine->keeping_awake());
+  REQUIRE(f.engine->set_setting("prevent_sleep", "0"));
+  std::this_thread::sleep_for(100ms);
+  CHECK_FALSE(f.engine->keeping_awake()); // turned off while it runs
+  REQUIRE(f.engine->set_setting("prevent_sleep", "1"));
+  REQUIRE(f.wait_for(id, DownloadState::Completed));
+  std::this_thread::sleep_for(100ms);
+  CHECK_FALSE(f.engine->keeping_awake()); // nothing left to do
+}

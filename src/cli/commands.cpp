@@ -14,6 +14,7 @@
 #include "core/net/probe.hpp"
 #include "core/platform/console.hpp"
 #include "core/platform/path.hpp"
+#include "core/platform/power.hpp"
 #include "core/verify/checksum.hpp"
 
 namespace lanes::cli {
@@ -186,6 +187,13 @@ int run_get(const GetArgs &args) {
       return kExitInterrupted;
     }
     print_error(result.error());
+    return kExitError;
+  }
+  // Mark of the Web + antivirus, as browsers do.
+  if (auto checked =
+          core::platform::mark_and_scan(result->path, options.request.url, options.request.referer);
+      !checked && checked.error().code == ErrorCode::AccessDenied) {
+    print_error(checked.error());
     return kExitError;
   }
   if (!args.quiet) {

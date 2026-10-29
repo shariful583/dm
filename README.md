@@ -7,8 +7,8 @@ and a Chrome/Edge extension.
 
 **Status:** early development. The download engine (parallel connections, dynamic splitting,
 crash-safe resume, retries, speed limits), queues and scheduler, HLS/DASH streams, video sites
-(yt-dlp), the `lanes` command line, the Windows app and the Chrome/Edge extension work. Windows
-integration (sleep prevention, shut down when done) and the installer are next.
+(yt-dlp), the `lanes` command line, the Windows app and the Chrome/Edge extension work. The
+installer is next.
 
 ## Windows app
 
@@ -17,6 +17,11 @@ window that checks the link first (name, size, resume support, folder), a progre
 the connection map and a live speed graph, queues with start/stop times, a speed-limit menu,
 options, a notification-area icon and taskbar progress. It follows the Windows light/dark theme
 and uses Mica on Windows 11. Paste a link with Ctrl+V or drop it on the window.
+
+Lanes keeps the computer awake while it downloads, and can exit, sleep, hibernate or shut down
+the computer when everything is done ("When done" in the status bar, with a minute to cancel).
+Finished files get the Mark of the Web and an antivirus check, as in a browser. Options can start
+Lanes with Windows and offer copied links for download.
 
 While the app runs, `lanes` commands and the browser extension use its engine; a second
 `lanes-gui.exe <url>` hands the link to the running window. `lanes-gui.exe --tray` starts hidden

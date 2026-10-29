@@ -6,6 +6,8 @@
 #include <mutex>
 #include <thread>
 
+#include <windows.h>
+
 #include <QDesktopServices>
 #include <QGuiApplication>
 #include <QJsonArray>
@@ -18,6 +20,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "../core/platform/temp_dir.hpp"
+#include "core/platform/registry.hpp"
 #include "gui/app_controller.hpp"
 #include "gui/format.hpp"
 #include "test_server.hpp"
@@ -216,6 +219,38 @@ TEST_CASE("browser messages open the Add window or continue an expired download"
   CHECK(shown_urls.isEmpty()); // no Add window: it continued download `id`
   REQUIRE(f.wait([&] { return f.app->details(id).value("state") == "completed"; }));
   CHECK(f.app->details(id).value("url") == url);
+}
+
+TEST_CASE("'when done' fires once everything has finished", "[gui]") {
+  Fixture f;
+  QStringList fired;
+  QObject::connect(f.app.get(), &gui::AppController::whenDoneReady,
+                   [&](const QString &action) { fired << action; });
+  f.app->setWhenDone("bogus");
+  CHECK(f.app->whenDone() == "nothing");
+  f.app->setWhenDone("sleep");
+  REQUIRE(f.app->add({{"url", QString::fromStdString(f.server.url("/a.bin?rate=262144"))}})
+              .value("ok")
+              .toBool());
+  REQUIRE(f.wait([&] { return !fired.isEmpty(); }, 15s));
+  CHECK(fired == QStringList{"sleep"});  // the countdown starts in the UI, nothing runs here
+  CHECK(f.app->whenDone() == "nothing"); // one-shot
+}
+
+TEST_CASE("Lanes can start with Windows", "[gui]") {
+  Fixture f;
+  ::SetEnvironmentVariableW(L"LANES_REGISTRY_PREFIX", L"Software\\LanesTest");
+  f.app->setStartWithWindows(true);
+  CHECK(f.app->startWithWindows());
+  auto value = core::platform::user_value(
+      "Software\\LanesTest\\Microsoft\\Windows\\CurrentVersion\\Run", "Lanes");
+  REQUIRE(value);
+  REQUIRE(value->has_value());
+  CHECK((*value)->ends_with("\" --tray"));
+  f.app->setStartWithWindows(false);
+  CHECK_FALSE(f.app->startWithWindows());
+  (void)core::platform::delete_user_key("Software\\LanesTest");
+  ::SetEnvironmentVariableW(L"LANES_REGISTRY_PREFIX", nullptr);
 }
 
 TEST_CASE("sizes and durations are formatted like the CLI", "[gui]") {

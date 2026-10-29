@@ -19,9 +19,13 @@
 #include "core/extract/updater.hpp"
 #include "core/extract/video.hpp"
 #include "core/extract/ytdlp.hpp"
+#include "core/media/stream.hpp"
 #include "core/net/probe.hpp"
 #include "core/platform/credentials.hpp"
 #include "core/platform/path.hpp"
+#include "core/platform/power.hpp"
+#include "core/platform/registry.hpp"
+#include "core/platform/system.hpp"
 #include "core/version.hpp"
 #include "gui/format.hpp"
 
@@ -82,6 +86,12 @@ AppController::AppController(core::Engine &engine, QObject *parent)
     : QObject(parent), engine_(engine), model_(engine), filter_(&model_),
       prefs_() /* organization + application name: "Lanes" (tests use their own) */ {
   pool_.setMaxThreadCount(4);
+  connect(&model_, &DownloadModel::statsChanged, this, &AppController::on_stats);
+  done_check_.setInterval(1000);
+  connect(&done_check_, &QTimer::timeout, this, &AppController::on_stats);
+  done_check_.start();
+  connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this,
+          &AppController::on_clipboard);
 }
 
 AppController::~AppController() {
@@ -138,6 +148,8 @@ QVariantMap AppController::settings() const {
                           "gui/notify", "gui/confirmCaptured"}) {
     out[QString::fromLatin1(key)] = prefs_.value(QString::fromLatin1(key), true).toBool();
   }
+  // Off unless chosen: watching the clipboard surprises people.
+  out["gui/clipboard"] = prefs_.value(QStringLiteral("gui/clipboard"), false).toBool();
   return out;
 }
 
@@ -490,6 +502,98 @@ QString AppController::saveLogin(const QString &host, const QString &username,
 
 QString AppController::removeLogin(const QString &host) {
   return status(core::platform::delete_login(utf8(host)));
+}
+
+// --- Windows integration ---
+
+namespace {
+
+// HKCU\Software\Microsoft\Windows\CurrentVersion\Run ("Software" replaced in tests).
+std::string run_key() {
+  auto prefix = core::platform::environment_variable("LANES_REGISTRY_PREFIX");
+  return (prefix && !prefix->empty() ? *prefix : std::string("Software")) +
+         "\\Microsoft\\Windows\\CurrentVersion\\Run";
+}
+
+} // namespace
+
+void AppController::setWhenDone(const QString &action) {
+  static const QStringList known{"nothing", "exit", "sleep", "hibernate", "shutdown"};
+  const QString a = known.contains(action) ? action : QStringLiteral("nothing");
+  if (a != when_done_) {
+    when_done_ = a;
+    emit whenDoneChanged();
+  }
+}
+
+void AppController::on_stats() {
+  const bool active = model_.activeCount() > 0;
+  if (active) {
+    had_active_ = true;
+  } else if (had_active_ && engine_.idle()) {
+    // Everything that was going to run has finished (nothing waiting to start by itself).
+    had_active_ = false;
+    if (when_done_ != QStringLiteral("nothing")) {
+      const QString action = when_done_;
+      setWhenDone(QStringLiteral("nothing")); // one-shot
+      emit whenDoneReady(action);
+    }
+  }
+  if (const bool awake = engine_.keeping_awake(); awake != keeping_awake_) {
+    keeping_awake_ = awake;
+    emit keepingAwakeChanged();
+  }
+}
+
+bool AppController::keepingAwake() const { return keeping_awake_; }
+
+QString AppController::runWhenDone(const QString &action) {
+  if (action == QStringLiteral("exit")) {
+    emit quitRequested();
+    return {};
+  }
+  const auto power = action == QStringLiteral("sleep") ? core::platform::PowerAction::Sleep
+                     : action == QStringLiteral("hibernate")
+                         ? core::platform::PowerAction::Hibernate
+                         : core::platform::PowerAction::Shutdown;
+  const QString error = status(core::platform::power_action(power));
+  if (error.isEmpty() && power == core::platform::PowerAction::Shutdown) {
+    emit quitRequested(); // save everything before Windows closes us
+  }
+  return error;
+}
+
+bool AppController::startWithWindows() const {
+  auto value = core::platform::user_value(run_key(), "Lanes");
+  return value && value->has_value();
+}
+
+void AppController::setStartWithWindows(bool on) {
+  if (on) {
+    const std::string command =
+        "\"" + core::platform::path_to_utf8(core::platform::current_executable()) + "\" --tray";
+    (void)core::platform::set_user_value(run_key(), "Lanes", command);
+  } else {
+    (void)core::platform::delete_user_value(run_key(), "Lanes");
+  }
+  emit startWithWindowsChanged();
+}
+
+// A copied link to a file type Lanes handles opens the Add window (option gui/clipboard).
+void AppController::on_clipboard() {
+  if (!prefs_.value(QStringLiteral("gui/clipboard"), false).toBool()) {
+    return;
+  }
+  const QString text = QGuiApplication::clipboard()->text().trimmed();
+  if (text == last_clipboard_ || text.contains('\n') || !isUrl(text)) {
+    return;
+  }
+  last_clipboard_ = text;
+  const QString name = qstr(core::net::filename_from_url(utf8(text)));
+  if (categoryOf(name) != QStringLiteral("General") ||
+      core::media::looks_like_stream(utf8(text), "")) {
+    emit addUrlsRequested({text}, {});
+  }
 }
 
 // --- video sites ---

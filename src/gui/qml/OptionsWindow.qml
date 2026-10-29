@@ -10,7 +10,7 @@ import Lanes
 ApplicationWindow {
     id: win
     width: 700
-    height: 560
+    height: 700
     minimumWidth: 560
     minimumHeight: 440
     title: qsTr("Options")
@@ -69,7 +69,7 @@ ApplicationWindow {
                 checked: App.settings["category_folders"] === "1"
                 onToggled: win.apply("category_folders", checked ? "1" : "0")
             }
-            Label { text: qsTr("Windows"); font.weight: Font.DemiBold; Layout.topMargin: 12 }
+            Label { text: qsTr("Lanes windows"); font.weight: Font.DemiBold; Layout.topMargin: 12 }
             CheckBox {
                 text: qsTr("Show the progress window when a download starts")
                 checked: App.settings["gui/showProgress"] === true
@@ -94,6 +94,27 @@ ApplicationWindow {
                 text: qsTr("Closing the window keeps Lanes running in the notification area")
                 checked: App.settings["gui/minimizeToTray"] === true
                 onToggled: win.apply("gui/minimizeToTray", checked)
+            }
+            Label { text: qsTr("Windows integration"); font.weight: Font.DemiBold; Layout.topMargin: 12 }
+            CheckBox {
+                text: qsTr("Start Lanes when I sign in to Windows (in the notification area)")
+                checked: App.startWithWindows
+                onToggled: App.startWithWindows = checked
+            }
+            CheckBox {
+                text: qsTr("Keep the computer awake while downloading")
+                checked: App.settings["prevent_sleep"] !== "0"
+                onToggled: win.apply("prevent_sleep", checked ? "1" : "0")
+            }
+            CheckBox {
+                text: qsTr("Check finished files with the antivirus and mark where they came from")
+                checked: App.settings["scan_downloads"] !== "0"
+                onToggled: win.apply("scan_downloads", checked ? "1" : "0")
+            }
+            CheckBox {
+                text: qsTr("Offer to download links I copy (clipboard)")
+                checked: App.settings["gui/clipboard"] === true
+                onToggled: win.apply("gui/clipboard", checked)
             }
             Item { Layout.fillHeight: true }
 

@@ -507,7 +507,37 @@ ApplicationWindow {
             Label {
                 visible: App.model.activeCount > 0
                 text: qsTr("%n active", "", App.model.activeCount) + "  ·  " + App.formatSpeed(App.model.totalSpeed)
+                      + (App.keepingAwake ? "  ·  " + qsTr("keeping the PC awake") : "")
                 font.pixelSize: 12
+            }
+            Item { Layout.fillWidth: true }
+            Label {
+                readonly property var names: ({ nothing: qsTr("nothing"), exit: qsTr("exit Lanes"),
+                                                sleep: qsTr("sleep"), hibernate: qsTr("hibernate"),
+                                                shutdown: qsTr("shut down") })
+                text: qsTr("When done: %1").arg(names[App.whenDone]) + "  ▴"
+                color: App.whenDone === "nothing" ? palette.placeholderText : palette.accent
+                font.pixelSize: 12
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: whenDoneMenu.popup()
+                }
+                Menu {
+                    id: whenDoneMenu
+                    Repeater {
+                        model: [["nothing", qsTr("Do nothing")], ["exit", qsTr("Exit Lanes")],
+                                ["sleep", qsTr("Sleep")], ["hibernate", qsTr("Hibernate")],
+                                ["shutdown", qsTr("Shut down")]]
+                        MenuItem {
+                            required property var modelData
+                            text: modelData[1]
+                            checkable: true
+                            checked: App.whenDone === modelData[0]
+                            onTriggered: App.whenDone = modelData[0]
+                        }
+                    }
+                }
             }
             Item { Layout.fillWidth: true }
             Label {
@@ -577,6 +607,68 @@ ApplicationWindow {
         }
     }
     MessageDialog { id: message }
+
+    // "When done": a minute to change one's mind.
+    Connections {
+        target: App
+        function onWhenDoneReady(action) {
+            countdown.action = action
+            countdown.left = 60
+            root.bringUp()
+            countdown.open()
+        }
+    }
+    Dialog {
+        id: countdown
+        property string action
+        property int left: 60
+        readonly property var verbs: ({ exit: qsTr("Lanes exits"), sleep: qsTr("The computer goes to sleep"),
+                                        hibernate: qsTr("The computer hibernates"),
+                                        shutdown: qsTr("The computer shuts down") })
+        title: qsTr("All downloads are done")
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        width: 420
+        closePolicy: Popup.NoAutoClose
+        onOpened: tick.start()
+        onClosed: tick.stop()
+        Timer {
+            id: tick
+            interval: 1000
+            repeat: true
+            onTriggered: {
+                if (--countdown.left <= 0) {
+                    countdown.close()
+                    const e = App.runWhenDone(countdown.action)
+                    if (e.length > 0)
+                        root.showMessage(qsTr("When done"), e)
+                }
+            }
+        }
+        Label {
+            text: qsTr("%1 in %2 seconds.").arg(countdown.verbs[countdown.action] || "").arg(countdown.left)
+            wrapMode: Text.Wrap
+            width: parent.width
+        }
+        footer: DialogButtonBox {
+            Button {
+                text: qsTr("Cancel")
+                highlighted: true
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+                onClicked: countdown.close()
+            }
+            Button {
+                text: qsTr("Now")
+                DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+                onClicked: {
+                    countdown.close()
+                    const e = App.runWhenDone(countdown.action)
+                    if (e.length > 0)
+                        root.showMessage(qsTr("When done"), e)
+                }
+            }
+        }
+    }
 
     // IDM's "Refresh download address": continue an expired download from a new link.
     Dialog {

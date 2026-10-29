@@ -14,6 +14,7 @@
 #include "core/extract/ytdlp.hpp"
 #include "core/platform/console.hpp"
 #include "core/platform/path.hpp"
+#include "core/platform/power.hpp"
 #include "core/platform/system.hpp"
 #include "core/service/service.hpp"
 
@@ -293,6 +294,11 @@ int run_video(const VideoArgs &args) {
       std::cerr << url << ":\n";
       exit_code = fail(result.error());
       continue; // the other playlist entries still get their turn
+    }
+    if (auto checked = core::platform::mark_and_scan(result->path, url, request->referer);
+        !checked && checked.error().code == ErrorCode::AccessDenied) {
+      exit_code = fail(checked.error());
+      continue;
     }
     if (!args.quiet) {
       std::cout << "Saved " << core::platform::path_to_utf8(result->path) << " ("

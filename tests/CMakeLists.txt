@@ -49,6 +49,7 @@ if(WIN32)
         core/extract/video_test.cpp
         core/platform/file_test.cpp
         core/platform/ipc_test.cpp
+        core/platform/power_test.cpp
         core/platform/process_test.cpp
         core/resume/sidecar_test.cpp
         core/service/service_test.cpp

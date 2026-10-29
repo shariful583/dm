@@ -7,6 +7,7 @@
 #include <QObject>
 #include <QSettings>
 #include <QThreadPool>
+#include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QtQml/qqmlregistration.h>
@@ -41,6 +42,13 @@ class AppController : public QObject {
   Q_PROPERTY(QVariantMap settings READ settings NOTIFY settingsChanged)
   Q_PROPERTY(QString version READ version CONSTANT)
   Q_PROPERTY(QString iconFont READ iconFont CONSTANT) // Segoe Fluent Icons or MDL2 Assets
+  // What to do once every download has finished: "nothing", "exit", "sleep", "hibernate",
+  // "shutdown". One-shot: back to "nothing" after it fired (whenDoneReady).
+  Q_PROPERTY(QString whenDone READ whenDone WRITE setWhenDone NOTIFY whenDoneChanged)
+  // Lanes starts (in the tray) when the user signs in to Windows (HKCU ...\CurrentVersion\Run).
+  Q_PROPERTY(bool startWithWindows READ startWithWindows WRITE setStartWithWindows NOTIFY
+                 startWithWindowsChanged)
+  Q_PROPERTY(bool keepingAwake READ keepingAwake NOTIFY keepingAwakeChanged)
 
 public:
   explicit AppController(core::Engine &engine, QObject *parent = nullptr);
@@ -57,6 +65,15 @@ public:
   QVariantMap settings() const;
   QString version() const;
   QString iconFont() const;
+  QString whenDone() const { return when_done_; }
+  void setWhenDone(const QString &action);
+  bool startWithWindows() const;
+  void setStartWithWindows(bool on);
+  bool keepingAwake() const;
+
+  // Carries out a "when done" action after the countdown: "exit" quits Lanes; the others ask
+  // Windows (Lanes then exits too for "shutdown"). Returns an error message or "".
+  Q_INVOKABLE QString runWhenDone(const QString &action);
 
   // --- downloads ---
   // Checks `url` in the background; probeFinished(url, {ok, error, fileName, size (-1 unknown),
@@ -154,6 +171,11 @@ signals:
   void videoPageRequested(const QString &url, const QVariantMap &request);
   void videoInfoReady(const QString &url, const QVariantMap &info);
   void extractorUpdated(bool ok, const QString &message);
+  void whenDoneChanged();
+  // Everything finished and an action was chosen: the UI counts down, then runWhenDone().
+  void whenDoneReady(const QString &action);
+  void startWithWindowsChanged();
+  void keepingAwakeChanged();
   void quitRequested();
 
 private:
@@ -170,6 +192,14 @@ private:
     QDateTime deadline;
   };
   std::optional<PendingRefresh> pending_refresh_;
+
+  void on_stats();
+  void on_clipboard();
+  QString when_done_ = QStringLiteral("nothing");
+  bool had_active_ = false;
+  QTimer done_check_; // the engine may become idle between two list refreshes
+  bool keeping_awake_ = false;
+  QString last_clipboard_;
 };
 
 } // namespace lanes::gui

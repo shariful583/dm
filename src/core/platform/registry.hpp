@@ -20,4 +20,11 @@ Result<std::optional<std::string>> user_default_value(const std::string &key);
 // Deletes the key and everything below it; succeeds if it does not exist.
 Result<void> delete_user_key(const std::string &key);
 
+// Named string values (e.g. "Lanes" under ...\CurrentVersion\Run).
+Result<void> set_user_value(const std::string &key, const std::string &name,
+                            const std::string &value);
+Result<std::optional<std::string>> user_value(const std::string &key, const std::string &name);
+// Succeeds if the value does not exist.
+Result<void> delete_user_value(const std::string &key, const std::string &name);
+
 } // namespace lanes::core::platform

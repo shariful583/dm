@@ -88,8 +88,9 @@ struct EngineConfig {
 // Owns the database, the queues and scheduler, the global speed limit, and one worker thread per
 // running download. Settings: download_dir, connections (8), max_active (4, all downloads),
 // speed_limit (0 = none, bytes/s), category_folders (1: downloads without a folder go to their
-// category's folder), system_proxy (1: use the Windows proxy settings when none is given). File
-// categories are edited with categories() / set_categories().
+// category's folder), system_proxy (1: use the Windows proxy settings when none is given),
+// prevent_sleep (1: no sleep while downloading), scan_downloads (1: Mark of the Web + antivirus for
+// finished files). File categories are edited with categories() / set_categories().
 //
 // Thread safety: every member may be called from any thread. Event callbacks run on engine or
 // download threads, without engine locks held; they must not block for long.
@@ -131,6 +132,8 @@ public:
   // True when nothing is running or waiting to start on its own (queued for a started queue or
   // "start now", scheduled, or in a queue with a start time).
   bool idle() const;
+  // True while the engine keeps Windows from sleeping (downloads running, prevent_sleep on).
+  bool keeping_awake() const;
 
   // Returns a subscription id for unsubscribe().
   int subscribe(std::function<void(const EngineEvent &)> callback);

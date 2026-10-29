@@ -14,6 +14,7 @@
 #include "core/net/probe.hpp"
 #include "core/platform/fs.hpp"
 #include "core/platform/path.hpp"
+#include "core/platform/power.hpp"
 #include "core/platform/system.hpp"
 #include "core/resume/sidecar.hpp"
 #include "core/store/store.hpp"
@@ -118,6 +119,7 @@ struct Engine::Impl {
   std::vector<std::pair<int, std::function<void(const EngineEvent &)>>> subscribers;
   int next_subscription = 1;
 
+  platform::KeepAwake keep_awake;
   std::jthread scheduler; // last: started after everything above exists
 
   // --- helpers; "locked" ones expect `mutex` held ---
@@ -297,16 +299,28 @@ struct Engine::Impl {
     auto worker = std::make_unique<Worker>();
     worker->own_limit = std::make_shared<limiter::RateLimiter>(r.speed_limit);
     o.limiters.push_back(worker->own_limit);
-    worker->thread =
-        std::jthread([this, id, o = std::move(o), video = r.video](std::stop_token stop) {
+    // Finished files get the Mark of the Web and an antivirus scan, as in browsers; a file the
+    // antivirus blocks makes the download fail.
+    const bool scan = setting_uint_locked("scan_downloads", 1) != 0;
+    auto finish = [this, id, scan, url = r.url,
+                   referer = r.referer](Result<engine::DownloadResult> result) {
+      if (result && scan) {
+        if (auto checked = platform::mark_and_scan(result->path, url, referer);
+            !checked && checked.error().code == ErrorCode::AccessDenied) {
+          result = make_error(checked.error());
+        }
+      }
+      on_finished(id, std::move(result));
+    };
+    worker->thread = std::jthread(
+        [o = std::move(o), video = r.video, finish = std::move(finish)](std::stop_token stop) {
           if (!video.empty()) { // a video page: yt-dlp finds the formats
             auto request = extract::parse_video_request(video);
-            on_finished(id, request ? extract::download_video(o, *request, stop)
-                                    : Result<engine::DownloadResult>(make_error(request.error())));
+            finish(request ? extract::download_video(o, *request, stop)
+                           : Result<engine::DownloadResult>(make_error(request.error())));
             return;
           }
-          auto result = media::download_any(std::move(o), stop); // files and HLS/DASH streams
-          on_finished(id, std::move(result));
+          finish(media::download_any(std::move(o), stop)); // files and HLS/DASH streams
         });
     workers[id] = std::move(worker);
   }
@@ -480,6 +494,10 @@ struct Engine::Impl {
       ++running;
       ++per_queue[r.queue];
     }
+    // No sleep while anything downloads (setting prevent_sleep).
+    const bool working = std::any_of(workers.begin(), workers.end(),
+                                     [](const auto &w) { return !w.second->finished; });
+    keep_awake.set(working && setting_uint_locked("prevent_sleep", 1) != 0);
   }
 
   void scheduler_loop(std::stop_token stop) {
@@ -931,6 +949,8 @@ std::vector<std::pair<std::string, std::string>> Engine::settings() const {
       {"speed_limit", "0"},
       {"category_folders", "1"},
       {"system_proxy", "1"},
+      {"prevent_sleep", "1"},
+      {"scan_downloads", "1"},
   };
   for (const auto &[key, value] : d.settings) {
     values[key] = value;
@@ -956,7 +976,8 @@ Result<void> Engine::set_setting(const std::string &key, const std::string &valu
     if (value.empty()) {
       return make_error(ErrorCode::InvalidArgument, "download_dir cannot be empty");
     }
-  } else if (key == "category_folders" || key == "system_proxy") {
+  } else if (key == "category_folders" || key == "system_proxy" || key == "prevent_sleep" ||
+             key == "scan_downloads") {
     if (!number || *number > 1) {
       return make_error(ErrorCode::InvalidArgument, key + " must be 0 or 1");
     }
@@ -964,7 +985,7 @@ Result<void> Engine::set_setting(const std::string &key, const std::string &valu
     return make_error(ErrorCode::InvalidArgument,
                       "unknown setting '" + key +
                           "' (known: download_dir, connections, max_active, speed_limit, "
-                          "category_folders, system_proxy)");
+                          "category_folders, system_proxy, prevent_sleep, scan_downloads)");
   }
   Impl &d = *impl_;
   std::lock_guard lock(d.mutex);
@@ -978,6 +999,8 @@ Result<void> Engine::set_setting(const std::string &key, const std::string &valu
   d.wake_scheduler_locked();
   return {};
 }
+
+bool Engine::keeping_awake() const { return impl_->keep_awake.active(); }
 
 bool Engine::idle() const {
   const Impl &d = *impl_;
