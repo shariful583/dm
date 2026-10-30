@@ -91,6 +91,11 @@ ApplicationWindow {
                 onToggled: win.apply("gui/notify", checked)
             }
             CheckBox {
+                text: qsTr("Translucent window background (Mica, Windows 11)")
+                checked: App.settings["gui/mica"] === true
+                onToggled: win.apply("gui/mica", checked)
+            }
+            CheckBox {
                 text: qsTr("Closing the window keeps Lanes running in the notification area")
                 checked: App.settings["gui/minimizeToTray"] === true
                 onToggled: win.apply("gui/minimizeToTray", checked)

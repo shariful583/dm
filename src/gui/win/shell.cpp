@@ -225,7 +225,11 @@ bool style_window(QWindow *window, bool dark, bool mica) {
   }
   const BOOL use_dark = dark ? TRUE : FALSE;
   ::DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &use_dark, sizeof(use_dark));
-  if (!mica) {
+  if (!mica) { // also undoes an earlier Mica
+    const DWM_SYSTEMBACKDROP_TYPE none = DWMSBT_AUTO;
+    ::DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &none, sizeof(none));
+    const MARGINS zero{0, 0, 0, 0};
+    ::DwmExtendFrameIntoClientArea(hwnd, &zero);
     return false;
   }
   const DWM_SYSTEMBACKDROP_TYPE backdrop = DWMSBT_MAINWINDOW; // Mica; Windows 11 22H2+

@@ -26,7 +26,8 @@ namespace lanes::gui {
 //
 // GUI-only preferences live in QSettings (HKCU\Software\<organization>\<application>: Lanes\Lanes;
 // tests set their own names) under "gui/":
-// gui/minimizeToTray, gui/showProgress, gui/showComplete, gui/notify, gui/confirmCaptured (show
+// gui/minimizeToTray, gui/showProgress, gui/showComplete, gui/notify, gui/mica (Windows 11
+// backdrop, Qt 6.12+ only), gui/confirmCaptured (show
 // the Add window for downloads the browser hands over; all default true).
 class AppController : public QObject {
   Q_OBJECT

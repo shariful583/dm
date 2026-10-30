@@ -14,12 +14,14 @@
 
 #include <QGuiApplication>
 #include <QIcon>
+#include <QLibraryInfo>
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QScreen>
 #include <QStyleHints>
 #include <QTimer>
+#include <QVersionNumber>
 
 #include "core/engine/engine.hpp"
 #include "core/platform/ipc.hpp"
@@ -306,14 +308,19 @@ int main(int argc, char *argv[]) {
                    [] { QCoreApplication::exit(0); });
 
   // Title bar colors and Mica follow the Windows theme.
-  const auto restyle = [&shell] {
+  // Mica needs the window to stay transparent; with Qt before 6.12 that area renders white, so
+  // older Qt (and anyone who turns it off: gui/mica) gets the plain Windows background.
+  const auto restyle = [&shell, &controller] {
     if (QQuickWindow *w = shell.main_window()) {
       const bool dark = QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
-      w->setProperty("mica", gui::win::style_window(w, dark, true));
+      const bool mica = QLibraryInfo::version() >= QVersionNumber(6, 12) &&
+                        controller.settings().value("gui/mica").toBool();
+      w->setProperty("mica", gui::win::style_window(w, dark, mica));
     }
   };
   restyle();
   QObject::connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, &app, restyle);
+  QObject::connect(&controller, &gui::AppController::settingsChanged, &app, restyle); // gui/mica
 
   if (!args.urls.isEmpty()) {
     controller.requestAdd(args.urls);

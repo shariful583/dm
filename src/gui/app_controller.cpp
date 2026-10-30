@@ -145,7 +145,7 @@ QVariantMap AppController::settings() const {
   }
   out["download_dir"] = QDir::toNativeSeparators(out.value("download_dir").toString());
   for (const char *key : {"gui/minimizeToTray", "gui/showProgress", "gui/showComplete",
-                          "gui/notify", "gui/confirmCaptured"}) {
+                          "gui/notify", "gui/confirmCaptured", "gui/mica"}) {
     out[QString::fromLatin1(key)] = prefs_.value(QString::fromLatin1(key), true).toBool();
   }
   // Off unless chosen: watching the clipboard surprises people.
