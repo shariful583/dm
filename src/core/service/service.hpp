@@ -18,7 +18,7 @@
 
 namespace lanes::core::service {
 
-// The engine process and its front-ends (CLI, browser bridge) talk JSON over the local pipe
+// The engine process and its front-ends (CLI, browser bridge) talk JSON over the local pipe:
 // {"v":1,"cmd":"add",...} → {"ok":true,...} or
 // {"ok":false,"error":{"code":"not_found","message":"..."}}.
 inline constexpr int kProtocolVersion = 1;

@@ -7,8 +7,8 @@ and a Chrome/Edge extension.
 
 **Status:** early development. The download engine (parallel connections, dynamic splitting,
 crash-safe resume, retries, speed limits), queues and scheduler, HLS/DASH streams, video sites
-(yt-dlp), the `lanes` command line, the Windows app and the Chrome/Edge extension work. The
-installer is next.
+(yt-dlp), the `lanes` command line, the Windows app, the Chrome/Edge extension and the
+installer work. Linux support comes later.
 
 ## Windows app
 

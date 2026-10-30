@@ -21,7 +21,7 @@ struct SavedSegment {
   std::uint64_t length() const { return end - start + 1; }
 };
 
-// What `<file>.lanes.json` records so a download can continue after a pause, crash or reboot
+// What `<file>.lanes.json` records so a download can continue after a pause, crash or reboot.
 // Never holds secrets: no cookies, credentials, auth headers or POST bodies,
 // and the URL without user:password. Plain value type; not synchronized.
 struct ResumeState {

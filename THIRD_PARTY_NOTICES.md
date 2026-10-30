@@ -1,7 +1,7 @@
 # Third-party notices
 
 Lanes is licensed under GPL-3.0-or-later (see `LICENSE`). It uses the following third-party
-components. Every dependency must be GPLv3-compatible and listed here before it is added
+components. Every dependency must be GPLv3-compatible and listed here before it is added.
 
 ## Currently used
 
