@@ -356,7 +356,8 @@ void TestServer::Impl::handle_redirect(const httplib::Request &req, httplib::Res
   if (hops > 1) {
     res.set_redirect("/redirect?to=" + percent_encode(*to) + "&hops=" + std::to_string(hops - 1));
   } else {
-    res.set_redirect(to->front() == '/' ? *to : "/" + *to);
+    const bool absolute = to->starts_with("http://") || to->starts_with("https://");
+    res.set_redirect(absolute || to->front() == '/' ? *to : "/" + *to);
   }
 }
 

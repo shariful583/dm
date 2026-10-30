@@ -56,6 +56,7 @@ struct Stats {
 //
 // Special paths:
 //   /redirect?to=<path>&hops=N   302 chain of N hops (default 1) ending at /<path>
+//                                (or at <path> itself when it is an http(s) URL: another host)
 //   /signed/<path>?expires=T&sig=S   valid only before unix time T with sig from signed_url()
 //   /echo                        200 with the request method, headers and body as text
 //

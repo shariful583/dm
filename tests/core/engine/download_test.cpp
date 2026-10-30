@@ -176,6 +176,31 @@ TEST_CASE("request options reach the server", "[engine][download]") {
   CHECK(read_file(defaults->path).find("User-Agent: Lanes/") != std::string::npos);
 }
 
+TEST_CASE("cookies go only to the site they were given for", "[engine][download]") {
+  Fixture f;
+  // Same host after the redirect: the cookie comes along.
+  auto same = f.options("/redirect?to=/echo");
+  same.filename = "same.txt";
+  same.request.method = "POST"; // no probe: the echo body names the method
+  same.request.cookies = "session=abc; theme=dark";
+  const auto kept = download_file(same);
+  REQUIRE(kept);
+  CHECK(read_file(kept->path).find("Cookie: session=abc; theme=dark\n") != std::string::npos);
+
+  // Another host (localhost instead of 127.0.0.1), like GitHub → its storage server: not sent.
+  std::string other = f.server.url("/echo");
+  other.replace(other.find("127.0.0.1"), 9, "localhost");
+  auto away = f.options("/redirect?to=" + other);
+  away.filename = "away.txt";
+  away.request.method = "POST";
+  away.request.cookies = "session=abc";
+  const auto moved = download_file(away);
+  REQUIRE(moved);
+  const std::string echo = read_file(moved->path);
+  CHECK(echo.find("METHOD") != std::string::npos);
+  CHECK(echo.find("session=abc") == std::string::npos);
+}
+
 TEST_CASE("HTTP authentication answers the server's challenge", "[engine][download]") {
   Fixture f;
   const std::string path = "/files/data.bin?basic_auth=user:pa:ss";

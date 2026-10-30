@@ -79,12 +79,15 @@ chrome.downloads.onCreated.addListener(async (item) => {
     type: "capture_download",
     url: item.url,
     finalUrl: item.finalUrl,
-    filename: rules.basename(item.filename) || rules.filenameFromUrl(url),
+    // Chrome's name (from Content-Disposition) once it knows it; otherwise Lanes asks the server.
+    // The final URL's last segment is often a storage hash, not a name.
+    filename: rules.basename(item.filename) || undefined,
     fileSize: size >= 0 ? size : undefined,
     mime: item.mime,
     referrer: item.referrer,
     userAgent: navigator.userAgent,
-    cookies: await cookiesFor(url),
+    // Lanes requests item.url (and follows its redirects), so it needs that site's login cookies.
+    cookies: await cookiesFor(item.url),
     method: post ? "POST" : "GET",
     body: post?.body,
   });

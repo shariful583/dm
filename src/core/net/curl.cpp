@@ -78,7 +78,26 @@ Result<void> apply_request(CURL *easy, const RequestOptions &options, RequestSto
     set(CURLOPT_REFERER, options.referer.c_str());
   }
   if (!options.cookies.empty()) {
-    set(CURLOPT_COOKIE, options.cookies.c_str());
+    // Host-only cookies of the requested site: CURLOPT_COOKIE would also send them to every
+    // redirect target (e.g. GitHub's login to the storage server its downloads redirect to).
+    const std::string host = host_of(options.url);
+    std::string_view rest = options.cookies;
+    while (!rest.empty() && !host.empty()) {
+      const auto end = rest.find(';');
+      std::string_view pair = rest.substr(0, end);
+      rest = end == std::string_view::npos ? std::string_view() : rest.substr(end + 1);
+      while (!pair.empty() && pair.front() == ' ') {
+        pair.remove_prefix(1);
+      }
+      const auto eq = pair.find('=');
+      if (eq == std::string_view::npos || eq == 0) {
+        continue;
+      }
+      // Netscape format: domain, include subdomains, path, secure, expiry, name, value.
+      const std::string line = host + "\tFALSE\t/\tFALSE\t0\t" + std::string(pair.substr(0, eq)) +
+                               "\t" + std::string(pair.substr(eq + 1));
+      set(CURLOPT_COOKIELIST, line.c_str());
+    }
   }
 
   if (equals_ignore_case(options.method, "POST")) {
