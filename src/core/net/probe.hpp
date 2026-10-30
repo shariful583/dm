@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "core/error.hpp"
 #include "core/net/request.hpp"
@@ -31,6 +32,13 @@ struct ProbeResult {
 Result<ProbeResult> probe(const RequestOptions &request);
 
 // Suggested sanitized file name from Content-Disposition, else the URL path, else "download".
-std::string suggest_filename(const std::string &content_disposition, const std::string &url);
+// A name without an extension (or with a script one like ".php") gets the one `content_type`
+// stands for ("video/mp4" → "365197.mp4"). Thread-safe.
+std::string suggest_filename(const std::string &content_disposition, const std::string &url,
+                             std::string_view content_type = {});
+
+// Usual extension (no dot) for a MIME type, parameters ignored; "" for unknown or generic types
+// (application/octet-stream, text/html). Thread-safe.
+std::string extension_for_content_type(std::string_view content_type);
 
 } // namespace lanes::core::net

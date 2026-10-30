@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "core/net/probe.hpp"
 
+#include <algorithm>
 #include <charconv>
+#include <iterator>
+#include <utility>
 
 #include "core/net/curl.hpp"
 #include "core/platform/path.hpp"
@@ -105,9 +108,112 @@ void apply_range_check(const Attempt &get, ProbeResult &r) {
   }
 }
 
+std::string ascii_lower(std::string_view s) {
+  std::string out(s);
+  for (char &c : out) {
+    if (c >= 'A' && c <= 'Z') {
+      c = static_cast<char>(c - 'A' + 'a');
+    }
+  }
+  return out;
+}
+
+// Lowercase extension of `name` without the dot: 1-5 letters/digits after the last dot ("" if
+// none, so "365197" and "v1.2 final" have none).
+std::string extension_of(std::string_view name) {
+  const auto dot = name.rfind('.');
+  if (dot == std::string_view::npos || dot == 0 || name.size() - dot - 1 > 5 ||
+      dot + 1 == name.size()) {
+    return {};
+  }
+  for (const char c : name.substr(dot + 1)) {
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) {
+      return {};
+    }
+  }
+  return ascii_lower(name.substr(dot + 1));
+}
+
 } // namespace
 
-std::string suggest_filename(const std::string &content_disposition, const std::string &url) {
+std::string extension_for_content_type(std::string_view content_type) {
+  static constexpr std::pair<std::string_view, std::string_view> kTypes[] = {
+      {"video/mp4", "mp4"},
+      {"video/webm", "webm"},
+      {"video/x-matroska", "mkv"},
+      {"video/quicktime", "mov"},
+      {"video/x-msvideo", "avi"},
+      {"video/x-flv", "flv"},
+      {"video/x-ms-wmv", "wmv"},
+      {"video/mp2t", "ts"},
+      {"video/mpeg", "mpg"},
+      {"video/3gpp", "3gp"},
+      {"video/x-m4v", "m4v"},
+      {"audio/mpeg", "mp3"},
+      {"audio/mp3", "mp3"},
+      {"audio/mp4", "m4a"},
+      {"audio/x-m4a", "m4a"},
+      {"audio/aac", "aac"},
+      {"audio/ogg", "ogg"},
+      {"audio/opus", "opus"},
+      {"audio/flac", "flac"},
+      {"audio/x-flac", "flac"},
+      {"audio/wav", "wav"},
+      {"audio/x-wav", "wav"},
+      {"audio/webm", "weba"},
+      {"audio/x-ms-wma", "wma"},
+      {"application/zip", "zip"},
+      {"application/x-zip-compressed", "zip"},
+      {"application/x-rar-compressed", "rar"},
+      {"application/vnd.rar", "rar"},
+      {"application/x-7z-compressed", "7z"},
+      {"application/gzip", "gz"},
+      {"application/x-gzip", "gz"},
+      {"application/x-tar", "tar"},
+      {"application/x-bzip2", "bz2"},
+      {"application/x-xz", "xz"},
+      {"application/pdf", "pdf"},
+      {"application/epub+zip", "epub"},
+      {"application/x-msdownload", "exe"},
+      {"application/vnd.microsoft.portable-executable", "exe"},
+      {"application/x-msi", "msi"},
+      {"application/x-iso9660-image", "iso"},
+      {"application/vnd.android.package-archive", "apk"},
+      {"application/x-apple-diskimage", "dmg"},
+      {"application/msword", "doc"},
+      {"application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"},
+      {"application/vnd.ms-excel", "xls"},
+      {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"},
+      {"application/vnd.ms-powerpoint", "ppt"},
+      {"application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx"},
+      {"application/json", "json"},
+      {"image/jpeg", "jpg"},
+      {"image/png", "png"},
+      {"image/gif", "gif"},
+      {"image/webp", "webp"},
+      {"image/avif", "avif"},
+      {"image/svg+xml", "svg"},
+      {"text/plain", "txt"},
+      {"text/csv", "csv"},
+  };
+  std::string_view type = content_type.substr(0, content_type.find(';'));
+  while (!type.empty() && (type.back() == ' ' || type.back() == '\t')) {
+    type.remove_suffix(1);
+  }
+  while (!type.empty() && (type.front() == ' ' || type.front() == '\t')) {
+    type.remove_prefix(1);
+  }
+  const std::string key = ascii_lower(type);
+  for (const auto &[mime, ext] : kTypes) {
+    if (key == mime) {
+      return std::string(ext);
+    }
+  }
+  return {};
+}
+
+std::string suggest_filename(const std::string &content_disposition, const std::string &url,
+                             std::string_view content_type) {
   std::string name;
   if (!content_disposition.empty()) {
     name = filename_from_content_disposition(content_disposition).value_or("");
@@ -115,7 +221,20 @@ std::string suggest_filename(const std::string &content_disposition, const std::
   if (name.empty()) {
     name = filename_from_url(url);
   }
-  return platform::sanitize_filename(name);
+  name = platform::sanitize_filename(name);
+  // "watch/365197" or "get.php" served as video/mp4: give the file the type it really has, or
+  // Windows cannot open it.
+  if (const std::string type_ext = extension_for_content_type(content_type); !type_ext.empty()) {
+    static constexpr std::string_view kScripts[] = {"php", "asp", "aspx", "cgi", "jsp", "py",
+                                                    "pl", "do", "action"};
+    const std::string ext = extension_of(name);
+    if (ext.empty()) {
+      name += "." + type_ext;
+    } else if (std::find(std::begin(kScripts), std::end(kScripts), ext) != std::end(kScripts)) {
+      name = name.substr(0, name.size() - ext.size()) + type_ext;
+    }
+  }
+  return name;
 }
 
 Result<ProbeResult> probe(const RequestOptions &request) {

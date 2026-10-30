@@ -216,7 +216,7 @@ ProbeResult probe_result_from_response(CURL *easy) {
   r.content_disposition = last_response_header(easy, "Content-Disposition").value_or("");
   const auto ranges = last_response_header(easy, "Accept-Ranges");
   r.accepts_ranges = ranges && equals_ignore_case(*ranges, "bytes");
-  r.filename = suggest_filename(r.content_disposition, r.final_url);
+  r.filename = suggest_filename(r.content_disposition, r.final_url, r.content_type);
   return r;
 }
 

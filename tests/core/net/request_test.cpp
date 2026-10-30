@@ -54,6 +54,18 @@ TEST_CASE("suggest_filename prefers Content-Disposition and sanitizes", "[net][u
   CHECK(suggest_filename("", "https://h/a%2Fb.txt") == "a_b.txt");
 }
 
+TEST_CASE("suggest_filename adds the extension the content type stands for", "[net][url]") {
+  CHECK(suggest_filename("", "https://h/watch/365197", "video/mp4") == "365197.mp4");
+  CHECK(suggest_filename("", "https://h/", "Video/MP4; charset=binary") == "download.mp4");
+  CHECK(suggest_filename("", "https://h/get.php?id=4", "application/zip") == "get.zip");
+  CHECK(suggest_filename("", "https://h/clip.mkv", "video/mp4") == "clip.mkv"); // kept
+  CHECK(suggest_filename("", "https://h/365197", "application/octet-stream") == "365197");
+  CHECK(suggest_filename("", "https://h/v1.2%20final", "audio/mpeg") == "v1.2 final.mp3");
+  CHECK(suggest_filename("attachment; filename=report", "https://h/x", "application/pdf") ==
+        "report.pdf");
+  CHECK(extension_for_content_type("text/html") == "");
+}
+
 TEST_CASE("only http, https and ftp URLs are accepted", "[net][url]") {
   CHECK(validate_url("http://example.com/a"));
   CHECK(validate_url("HTTPS://example.com/a"));
