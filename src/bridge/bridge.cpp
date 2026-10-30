@@ -314,7 +314,8 @@ std::vector<std::string> host_registry_keys() {
 }
 
 core::Result<void> register_host(const std::filesystem::path &bridge_exe,
-                                 const std::vector<std::string> &extension_ids) {
+                                 const std::vector<std::string> &extension_ids,
+                                 core::platform::RegistryScope scope) {
   json origins = json::array();
   for (const auto &id : extension_ids) {
     origins.push_back("chrome-extension://" + id + "/");
@@ -333,7 +334,7 @@ core::Result<void> register_host(const std::filesystem::path &bridge_exe,
   }
   for (const auto &key : host_registry_keys()) {
     if (auto ok = core::platform::set_user_default_value(
-            key, core::platform::path_to_utf8(manifest_path));
+            key, core::platform::path_to_utf8(manifest_path), scope);
         !ok) {
       return ok;
     }
@@ -341,9 +342,10 @@ core::Result<void> register_host(const std::filesystem::path &bridge_exe,
   return {};
 }
 
-core::Result<void> unregister_host(const std::filesystem::path &bridge_exe) {
+core::Result<void> unregister_host(const std::filesystem::path &bridge_exe,
+                                   core::platform::RegistryScope scope) {
   for (const auto &key : host_registry_keys()) {
-    if (auto ok = core::platform::delete_user_key(key); !ok) {
+    if (auto ok = core::platform::delete_user_key(key, scope); !ok) {
       return ok;
     }
   }

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "core/error.hpp"
+#include "core/platform/registry.hpp"
 
 namespace lanes::bridge {
 
@@ -47,13 +48,18 @@ std::string handle(std::string_view message, const Forward &forward);
 core::Result<std::string> forward_to_lanes(const std::string &message,
                                            const std::filesystem::path &gui);
 
-// Native-messaging host registration for Chrome and Edge (current user): writes the host manifest
+// Native-messaging host registration for Chrome and Edge: writes the host manifest
 // `com.lanes.bridge.json` next to `bridge_exe`, allowing `extension_ids`, and points
-// HKCU\Software\{Google\Chrome,Microsoft\Edge}\NativeMessagingHosts\com.lanes.bridge at it.
+// {HKCU,HKLM}\Software\{Google\Chrome,Microsoft\Edge}\NativeMessagingHosts\com.lanes.bridge at
+// it. `Machine` (an all-users install in Program Files) needs administrator rights, for the
+// manifest next to the program as much as for HKLM.
 inline constexpr std::string_view kHostName = "com.lanes.bridge";
-core::Result<void> register_host(const std::filesystem::path &bridge_exe,
-                                 const std::vector<std::string> &extension_ids);
-core::Result<void> unregister_host(const std::filesystem::path &bridge_exe);
+core::Result<void>
+register_host(const std::filesystem::path &bridge_exe, const std::vector<std::string> &extension_ids,
+              core::platform::RegistryScope scope = core::platform::RegistryScope::User);
+core::Result<void>
+unregister_host(const std::filesystem::path &bridge_exe,
+                core::platform::RegistryScope scope = core::platform::RegistryScope::User);
 // The registry keys register_host writes (Chrome, Edge).
 std::vector<std::string> host_registry_keys();
 

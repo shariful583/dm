@@ -74,13 +74,16 @@ Name: "{autodesktop}\Lanes"; Filename: "{app}\lanes-gui.exe"; Tasks: desktopicon
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Lanes"; ValueData: """{app}\lanes-gui.exe"" --tray"; Tasks: startup; Flags: uninsdeletevalue
 
 [Run]
-; Native-messaging host for Chrome and Edge (HKCU of the signed-in user, also when installing
-; for all users).
-Filename: "{app}\lanes-bridge.exe"; Parameters: "--register"; Tasks: browser; Flags: runhidden runasoriginaluser; StatusMsg: "Connecting Chrome and Edge..."
+; Native-messaging host for Chrome and Edge. Per user: HKCU, as the signed-in user. For all users:
+; HKLM, from the elevated installer (the host manifest goes next to the program, which only an
+; administrator may write in Program Files).
+Filename: "{app}\lanes-bridge.exe"; Parameters: "--register"; Tasks: browser; Check: not IsAdminInstallMode; Flags: runhidden runasoriginaluser; StatusMsg: "Connecting Chrome and Edge..."
+Filename: "{app}\lanes-bridge.exe"; Parameters: "--register --machine"; Tasks: browser; Check: IsAdminInstallMode; Flags: runhidden; StatusMsg: "Connecting Chrome and Edge..."
 Filename: "{app}\lanes-gui.exe"; Description: "Start Lanes"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallRun]
-Filename: "{app}\lanes-bridge.exe"; Parameters: "--unregister"; Flags: runhidden; RunOnceId: "UnregisterBridge"
+Filename: "{app}\lanes-bridge.exe"; Parameters: "--unregister"; Check: not IsAdminInstallMode; Flags: runhidden; RunOnceId: "UnregisterBridge"
+Filename: "{app}\lanes-bridge.exe"; Parameters: "--unregister --machine"; Check: IsAdminInstallMode; Flags: runhidden; RunOnceId: "UnregisterBridgeMachine"
 Filename: "{app}\lanes.exe"; Parameters: "engine --stop"; Flags: runhidden; RunOnceId: "StopEngine"
 
 [UninstallDelete]

@@ -2,8 +2,9 @@
 // lanes-bridge.exe: native-messaging host for the Lanes browser extension.
 //
 //   (started by Chrome/Edge)   serve messages on stdin/stdout until the browser closes the port
-//   lanes-bridge --register    register the host for Chrome and Edge (current user)
-//   lanes-bridge --unregister  remove the registration
+//   lanes-bridge --register [--machine]    register the host for Chrome and Edge (current user;
+//                                          --machine: all users, needs administrator rights)
+//   lanes-bridge --unregister [--machine]  remove the registration
 //
 // stdout carries the protocol only: nothing else may ever be printed there while serving.
 
@@ -40,8 +41,11 @@ std::vector<std::string> extension_ids() {
 int main(int argc, char *argv[]) {
   using namespace lanes;
   const auto exe = core::platform::current_executable();
+  const auto scope = argc >= 3 && std::string_view(argv[2]) == "--machine"
+                         ? core::platform::RegistryScope::Machine
+                         : core::platform::RegistryScope::User;
   if (argc >= 2 && std::string_view(argv[1]) == "--register") {
-    if (auto ok = bridge::register_host(exe, extension_ids()); !ok) {
+    if (auto ok = bridge::register_host(exe, extension_ids(), scope); !ok) {
       std::fprintf(stderr, "lanes-bridge: %s\n", ok.error().message.c_str());
       return 1;
     }
@@ -49,7 +53,7 @@ int main(int argc, char *argv[]) {
     return 0;
   }
   if (argc >= 2 && std::string_view(argv[1]) == "--unregister") {
-    if (auto ok = bridge::unregister_host(exe); !ok) {
+    if (auto ok = bridge::unregister_host(exe, scope); !ok) {
       std::fprintf(stderr, "lanes-bridge: %s\n", ok.error().message.c_str());
       return 1;
     }
