@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Windows installer: on a version tag (v0.1.0) or by hand. Signs only when
-# the signing secrets exist; without them it produces an unsigned installer and
-# still passes:
+# Windows installer: on a version tag (v0.1.0) or by hand. A tag also
+# publishes a GitHub Release with the installer and the extension ZIP (a "-" in the tag, as in
+# v0.2.0-beta1, makes it a pre-release); a run by hand only keeps them as artifacts. Signs only
+# when the signing secrets exist; without them the installer is unsigned and the
+# run still passes:
 #   LANES_SIGN_PFX_BASE64  the code-signing certificate (.pfx), base64
 #   LANES_SIGN_PASSWORD    its password
 name: Release
@@ -13,7 +15,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write # publishes the GitHub Release on a version tag
 
 jobs:
   installer:
@@ -125,3 +127,15 @@ jobs:
         with:
           name: lanes-extension
           path: build/extension/*.zip
+
+      - name: Publish the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          $files = @(Get-ChildItem build/installer/*.exe) + @(Get-ChildItem build/extension/*.zip)
+          $arguments = @($env:TAG) + $files.FullName + @('--title', "Lanes $env:TAG", '--generate-notes')
+          if ($env:TAG -match '-') { $arguments += '--prerelease' }
+          gh release create @arguments
