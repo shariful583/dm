@@ -112,7 +112,16 @@ jobs:
       - name: Test the release build
         run: ctest --preset windows-release
 
+      - name: Pack the browser extension
+        shell: pwsh
+        run: ./tools/make-extension.ps1
+
       - uses: actions/upload-artifact@v4
         with:
           name: lanes-setup
           path: build/installer/*.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lanes-extension
+          path: build/extension/*.zip
