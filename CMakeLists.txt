@@ -2,7 +2,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(lanes
-    VERSION 0.1.0
+    VERSION 0.1.1
     DESCRIPTION "Lanes Download Manager"
     LANGUAGES CXX)
 

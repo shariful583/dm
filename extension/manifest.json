@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Lanes Download Manager",
   "short_name": "Lanes",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Send downloads and page media to the Lanes desktop app.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAm8gehF4rCvgLoVUhtGQqhNZiUXwBstaTR67YyJJg2IQU63Lako3Gk4e3Pw1I4bX0A2jheq/Vn4TjRfhfxC/h2ncR15x6Aa5BdYCckbnoS/s75mbatdchggrgyzJB3J0dnbwEOr6KQLawqgDVlQPxoG3GceE2aJGPEmjmUyGsywFP/SE/wp3ZzgCCz22xjOWC7DFCkY59T0qxWcO4azJxH+4RjWxkDVrGpdHWob7IaqkztxfEo2rwfnVToQtZx2lCDvQ9yUaBGZVmAnyM9GIo4GAjXeXye9fLDviRk0zCsjvUHMqZli/nKxreHC9czywWbTff0xafcxSmxASlLKF8nwIDAQAB",
   "minimum_chrome_version": "116",
