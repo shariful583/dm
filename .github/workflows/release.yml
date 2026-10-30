@@ -48,7 +48,10 @@ jobs:
           key: vcpkg-${{ runner.os }}-windows-release-${{ hashFiles('vcpkg.json') }}
           restore-keys: vcpkg-${{ runner.os }}-windows-release-
 
-      # Qt under the LGPL through aqtinstall, the same MSVC kit as development.
+      # Qt under the LGPL through aqtinstall. Qt 6.10.3, not the 6.12 used for
+      # development: from 6.11 on, Qt's download server keeps one folder per compiler
+      # (qt6_6120/qt6_6120_msvc2022_64/), which aqtinstall 3.3.0 (the newest) cannot read yet.
+      # Move to 6.12 once a newer aqtinstall can. Lanes builds with Qt 6.8+.
       # Python 3.14 exactly: current Qt archives need its zipfile support (older Pythons fail with
       # BadZipFile), and 3.15 is too new for aqtinstall's dependencies. aqtinstall runs directly
       # (not through a wrapper action) so its own messages show in the log.
@@ -62,21 +65,21 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}\Qt
-          key: qt-6.12.0-win64_msvc2022_64-v1
+          key: qt-6.10.3-win64_msvc2022_64-v1
 
       - name: Install Qt
         shell: pwsh
         run: |
           $qt = Join-Path $env:RUNNER_TEMP 'Qt'
-          if (-not (Test-Path "$qt\6.12.0\msvc2022_64\bin\qmake.exe")) {
+          if (-not (Test-Path "$qt\6.10.3\msvc2022_64\bin\qmake.exe")) {
             python -m pip install --disable-pip-version-check "aqtinstall==3.3.*"
             if ($LASTEXITCODE -ne 0) { throw 'pip install aqtinstall failed' }
-            python -m aqt install-qt windows desktop 6.12.0 win64_msvc2022_64 --outputdir $qt
+            python -m aqt install-qt windows desktop 6.10.3 win64_msvc2022_64 --outputdir $qt
             if ($LASTEXITCODE -ne 0) { throw 'aqt install-qt failed (see its messages above)' }
           }
           # CMakeLists.txt adds QT_ROOT_DIR to CMAKE_PREFIX_PATH.
-          "QT_ROOT_DIR=$qt\6.12.0\msvc2022_64" >> $env:GITHUB_ENV
-          "$qt\6.12.0\msvc2022_64\bin" >> $env:GITHUB_PATH
+          "QT_ROOT_DIR=$qt\6.10.3\msvc2022_64" >> $env:GITHUB_ENV
+          "$qt\6.10.3\msvc2022_64\bin" >> $env:GITHUB_PATH
 
       - name: Install Inno Setup
         shell: pwsh
